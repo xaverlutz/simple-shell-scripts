@@ -1,4 +1,4 @@
-[![lint](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/lint.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/lint.yml)
+[![lint](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml)
 
 ---
 
