@@ -5,6 +5,8 @@
 #   make uninstall   remove whatever was installed
 #   make lint        shellcheck the bash scripts, syntax-check the zsh ones
 #                    (stricter: make lint SHELLCHECK_SEVERITY=style)
+#   make test        run the bats test suite in tests/
+#   make check       lint + test
 #
 # Override the destination with PREFIX or BINDIR:
 #   make install PREFIX=/usr/local
@@ -26,7 +28,7 @@ BASH_SCRIPTS := $(shell for f in $(SCRIPTS); do head -1 $$f | grep -q bash && ec
 ZSH_SCRIPTS  := $(shell for f in $(SCRIPTS); do head -1 $$f | grep -q zsh  && echo $$f; done)
 
 .DEFAULT_GOAL := help
-.PHONY: help install link uninstall lint list path-check
+.PHONY: help install link uninstall lint test check list path-check
 
 help:
 	@echo "Targets:"
@@ -34,6 +36,8 @@ help:
 	@echo "  link        Symlink scripts to $(BINDIR)"
 	@echo "  uninstall   Remove installed scripts from $(BINDIR)"
 	@echo "  lint        Run shellcheck / syntax checks"
+	@echo "  test        Run the bats test suite"
+	@echo "  check       lint + test"
 	@echo "  list        Show what would be installed"
 	@echo
 	@echo "Destination: $(BINDIR)   (override with PREFIX= or BINDIR=)"
@@ -94,3 +98,10 @@ lint:
 		echo "zsh not found - skipping $(ZSH_SCRIPTS)"; \
 	fi; \
 	exit $$fail
+
+test:
+	@command -v bats >/dev/null 2>&1 || { \
+		echo "bats not found. Install with: brew install bats-core"; exit 1; }
+	@bats tests/
+
+check: lint test
