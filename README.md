@@ -1,3 +1,7 @@
+[![lint](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/lint.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/lint.yml)
+
+---
+
 # simple-shell-scripts
 
 A collection of utility shell scripts for Git workflows, iOS Simulator, and local development.
