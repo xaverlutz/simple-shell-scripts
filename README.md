@@ -60,6 +60,25 @@ Requires: `curl`, `python3`, Xcode command line tools
 
 ## Installation
 
+```
+# 1. Clone wherever you keep code
+git clone https://github.com/xaverlutz/simple-shell-scripts.git ~/code/simple-shell-scripts
+cd ~/code/simple-shell-scripts
+
+# 2. Make them executable
+chmod +x *.sh
+
+# 3. Symlink every script into ~/bin, dropping the .sh extension
+mkdir -p ~/bin
+for f in *.sh; do
+    ln -sf "$PWD/$f" ~/bin/"${f%.sh}"
+done
+
+# 4. Put ~/bin on your PATH (skip if it's already there)
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
 ### Option 1 — Symlinks (recommended)
 
 Create symlinks in a directory that's on your `$PATH` (e.g. `/usr/local/bin`):
