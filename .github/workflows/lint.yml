@@ -1,4 +1,4 @@
-name: lint
+name: ci
 
 on:
   push:
@@ -20,6 +20,20 @@ jobs:
 
       - name: Lint
         run: make lint
+
+  test:
+    name: bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run tests
+        run: make test
 
   install:
     name: install smoke test
