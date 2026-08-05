@@ -56,8 +56,6 @@ Requires: `curl`, `python3`, Xcode command line tools
 
 ---
 
----
-
 ## Installation
 
 ```
