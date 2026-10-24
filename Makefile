@@ -1,7 +1,8 @@
 # simple-shell-scripts
 #
 #   make install     copy scripts into $(BINDIR), dropping the .sh suffix
-#   make link        symlink instead (edits take effect immediately)
+#   make link        symlink instead (edits take effect immediately), plus
+#                    update_shell_scripts to pull and relink later
 #   make uninstall   remove whatever was installed
 #   make lint        shellcheck the bash scripts, syntax-check the zsh ones
 #                    (stricter: make lint SHELLCHECK_SEVERITY=style)
@@ -19,13 +20,17 @@ BINDIR ?= $(PREFIX)/bin
 # changed to `grep -E`; "warning" keeps the current tree green.
 SHELLCHECK_SEVERITY ?= warning
 
-SCRIPTS := $(sort $(wildcard *.sh))
+# install.sh is the installer/updater, not a user script: linking it as
+# "install" would shadow /usr/bin/install. `make link` exposes it as UPDATER.
+ALL_SH  := $(sort $(wildcard *.sh))
+SCRIPTS := $(filter-out install.sh,$(ALL_SH))
 NAMES   := $(basename $(SCRIPTS))
 TARGETS := $(addprefix $(BINDIR)/,$(NAMES))
+UPDATER := update_shell_scripts
 
 # Split by interpreter, based on each file's shebang line.
-BASH_SCRIPTS := $(shell for f in $(SCRIPTS); do head -1 $$f | grep -q bash && echo $$f; done)
-ZSH_SCRIPTS  := $(shell for f in $(SCRIPTS); do head -1 $$f | grep -q zsh  && echo $$f; done)
+BASH_SCRIPTS := $(shell for f in $(ALL_SH); do head -1 $$f | grep -q bash && echo $$f; done)
+ZSH_SCRIPTS  := $(shell for f in $(ALL_SH); do head -1 $$f | grep -q zsh  && echo $$f; done)
 
 .DEFAULT_GOAL := help
 .PHONY: help install link uninstall lint test check list path-check
@@ -60,10 +65,19 @@ link: | $(BINDIR)
 		ln -sf "$(CURDIR)/$$f" "$(BINDIR)/$$n"; \
 		echo "  linked    $$n -> $(CURDIR)/$$f"; \
 	done
+	@ln -sf "$(CURDIR)/install.sh" "$(BINDIR)/$(UPDATER)"
+	@echo "  linked    $(UPDATER) -> $(CURDIR)/install.sh"
+	@# Drop links to scripts that have since been removed from the repo.
+	@for l in "$(BINDIR)"/*; do \
+		[ -L "$$l" ] && [ ! -e "$$l" ] || continue; \
+		case "$$(readlink "$$l")" in \
+			"$(CURDIR)"/*) rm -f "$$l"; echo "  pruned    $${l##*/}" ;; \
+		esac; \
+	done
 	@$(MAKE) --no-print-directory path-check
 
 uninstall:
-	@for n in $(NAMES); do \
+	@for n in $(NAMES) $(UPDATER); do \
 		if [ -e "$(BINDIR)/$$n" ] || [ -L "$(BINDIR)/$$n" ]; then \
 			rm -f "$(BINDIR)/$$n"; \
 			echo "  removed   $$n"; \

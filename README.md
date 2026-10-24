@@ -62,65 +62,66 @@ Requires: `curl`, `python3`, Xcode command line tools
 
 ## Installation
 
-```
-# 1. Clone wherever you keep code
-git clone https://github.com/xaverlutz/simple-shell-scripts.git ~/code/simple-shell-scripts
-cd ~/code/simple-shell-scripts
-
-# 2. Make them executable
-chmod +x *.sh
-
-# 3. Symlink every script into ~/bin, dropping the .sh extension
-mkdir -p ~/bin
-for f in *.sh; do
-    ln -sf "$PWD/$f" ~/bin/"${f%.sh}"
-done
-
-# 4. Put ~/bin on your PATH (skip if it's already there)
-echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-### Option 1 — Symlinks (recommended)
-
-Create symlinks in a directory that's on your `$PATH` (e.g. `/usr/local/bin`):
+### On a new Mac
 
 ```bash
-ln -s /path/to/simple-shell-scripts/create_branch.sh /usr/local/bin/create_branch
-ln -s /path/to/simple-shell-scripts/delete_local_branch.sh /usr/local/bin/delete_local_branch
-ln -s /path/to/simple-shell-scripts/send_location.sh /usr/local/bin/send_location
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/xaverlutz/simple-shell-scripts/main/install.sh)"
 ```
 
-Make sure the scripts are executable first:
+This clones the repo to `~/.local/share/simple-shell-scripts`, checks out the newest release (the highest `vX.Y.Z` tag), symlinks every script into `~/.local/bin` without the `.sh` extension, and adds `~/.local/bin` to your `PATH` in `~/.zshrc` if it isn't there yet. The only requirement is `git` and `make` from the Xcode Command Line Tools (`xcode-select --install`).
+
+### Updating
 
 ```bash
-chmod +x /path/to/simple-shell-scripts/*.sh
+update_shell_scripts
 ```
 
-After linking you can run them from anywhere:
+This moves the clone to the newest release and relinks, so new scripts show up and links to deleted ones are removed. Because the commands are symlinks into the clone, nothing else needs to be done. Pre-release tags such as `v1.2.0-rc1` are skipped. If no release exists yet, the install stays on `main` and switches to the first release once there is one.
+
+### Choosing what to follow
+
+Each install remembers its channel, so a plain `update_shell_scripts` keeps doing the same thing:
 
 ```bash
-create_branch my-feature
-delete_local_branch
-send_location "Tokyo"
+update_shell_scripts --release      # newest vX.Y.Z tag (the default)
+update_shell_scripts --main         # tip of main, for unreleased changes
+update_shell_scripts --tag v1.2.0   # pin to one version; updates stay put
 ```
 
-### Option 2 — Add folder to PATH
+### From a checkout you work in
 
-Add the scripts directory directly to your `$PATH` in `~/.zshrc` or `~/.bashrc`:
+If you already have a clone, for example one you edit, link it directly instead:
 
 ```bash
-export PATH="$PATH:/path/to/simple-shell-scripts"
+./install.sh
 ```
 
-Then reload your shell:
+`update_shell_scripts` will then pull whatever branch that checkout is on, rather than switching to a release. It only fast-forwards, and skips the pull if the branch has no upstream. Pass `--release`, `--main` or `--tag` to give it a channel instead.
+
+### Options
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BINDIR` | `~/.local/bin` | Where the commands are linked |
+| `SIMPLE_SHELL_SCRIPTS_DIR` | `~/.local/share/simple-shell-scripts` | Where a fresh install clones to |
+
+### With make
 
 ```bash
-source ~/.zshrc
+make link        # symlink scripts (and update_shell_scripts) into ~/.local/bin
+make install     # copy instead of symlink (no auto-update)
+make uninstall   # remove them again
 ```
 
-### Option 3 — Run directly
+## Releasing
 
-```bash
-bash /path/to/simple-shell-scripts/create_branch.sh my-feature
-```
+Every Mac on the release channel picks up a new version the next time it runs `update_shell_scripts`. To publish one, tag `main` with the next `vX.Y.Z`:
+
+- **On GitHub:** *Releases → Draft a new release*, create the tag (for example `v1.0.0`) on `main`, and publish.
+- **From the terminal:**
+
+  ```bash
+  git tag --no-sign -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
+  ```
+
+  Drop `--no-sign` if you have tag signing set up.

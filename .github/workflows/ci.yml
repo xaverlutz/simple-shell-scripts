@@ -93,3 +93,12 @@ jobs:
         run: |
           make uninstall PREFIX="$RUNNER_TEMP/prefix"
           test -z "$(ls -A "$RUNNER_TEMP/prefix/bin")"
+
+      # The checkout is a detached HEAD, so this also covers skipping the pull.
+      - name: install.sh links the checkout and the updater
+        run: |
+          export BINDIR="$RUNNER_TEMP/linkbin"
+          ./install.sh
+          "$BINDIR/update_shell_scripts" --help
+          "$BINDIR/create_branch" --help
+          test ! -e "$BINDIR/install"
