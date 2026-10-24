@@ -41,6 +41,46 @@ That's it. The installer:
 
 Open a new terminal window and the commands are ready. The only requirement is the Xcode Command Line Tools (`xcode-select --install`).
 
+### 🤲 Or install by hand
+
+Prefer to see every step? Clone the repo wherever you keep code and link the scripts from there:
+
+```bash
+# 1. Clone it
+git clone https://github.com/xaverlutz/simple-shell-scripts.git ~/Developer/simple-shell-scripts
+cd ~/Developer/simple-shell-scripts
+
+# 2. Link every script into ~/.local/bin, without the .sh
+make link
+
+# 3. Put ~/.local/bin on your PATH (skip if it's already there)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Because the commands are symlinks into your clone, updating is just a pull:
+
+```bash
+cd ~/Developer/simple-shell-scripts
+git pull
+make link        # picks up new scripts, removes links to deleted ones
+```
+
+`make link` also adds `update_shell_scripts`, which does exactly this for you from any folder.
+
+<details>
+<summary>Without make</summary>
+
+```bash
+mkdir -p ~/.local/bin
+for f in *.sh; do
+  [ "$f" = install.sh ] && continue   # the installer isn't a command
+  ln -sf "$PWD/$f" ~/.local/bin/"${f%.sh}"
+done
+```
+
+</details>
+
 ## 🐢 Staying up to date
 
 ```bash
@@ -123,13 +163,13 @@ Needs `curl`, `python3` and Xcode.
 
 ## 🛠️ Hacking on the scripts
 
-Have a clone you edit? Link that one instead, so your changes take effect immediately:
+Linked from your own clone (see [Install by hand](#-or-install-by-hand)), every edit takes effect immediately. You can also run the installer from that clone:
 
 ```bash
 ./install.sh
 ```
 
-`update_shell_scripts` then pulls whatever branch the checkout is on, instead of switching to a release. It only fast-forwards, and skips the pull if the branch has no upstream.
+It links the clone the same way, and `update_shell_scripts` then pulls whatever branch the checkout is on, instead of switching to a release. It only fast-forwards, and skips the pull if the branch has no upstream.
 
 <details>
 <summary>Make targets</summary>
