@@ -102,3 +102,12 @@ jobs:
           "$BINDIR/update_shell_scripts" --help
           "$BINDIR/create_branch" --help
           test ! -e "$BINDIR/install"
+
+      - name: install.sh --only links just that script, --all brings back the rest
+        run: |
+          export BINDIR="$RUNNER_TEMP/onlybin"
+          ./install.sh --only reset_build
+          test "$(ls "$BINDIR" | paste -sd ' ' -)" = "reset_build update_shell_scripts"
+          test ! -e create_branch.sh
+          "$BINDIR/update_shell_scripts" --all
+          "$BINDIR/create_branch" --help

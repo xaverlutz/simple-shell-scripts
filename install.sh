@@ -15,6 +15,9 @@
 #   pinned    stay on the tag given with --tag
 # A checkout with no channel set (e.g. one you develop in) just pulls its
 # current branch.
+#
+# --only narrows the clone to some scripts with a sparse checkout, which git
+# remembers too; --all widens it back.
 
 set -euo pipefail
 
@@ -58,6 +61,11 @@ $(echo -e "${BOLD}OPTIONS:${RESET}")
   --release     Follow the newest release tag (remembered)
   --main        Follow the tip of main (remembered)
   --tag <tag>   Pin to a specific tag, e.g. v1.2.0 (remembered)
+  --only <names>
+                Check out and link only these scripts, e.g.
+                --only send_location or --only create_branch,reset_build
+                (remembered; replaces the previous selection)
+  --all         Check out and link every script again (the default)
   -h, --help    Show this help message and exit
 
 $(echo -e "${BOLD}ENVIRONMENT:${RESET}")
@@ -170,6 +178,47 @@ update_repo() {
   esac
 }
 
+# User scripts in the checked-out commit, by name, one per line.
+available_scripts() {
+  git -C "$1" ls-tree --name-only HEAD | sed -n 's/\.sh$//p' | grep -vx install || true
+}
+
+# Scripts a sparse checkout is narrowed to, space-separated; empty for all.
+selected_scripts() {
+  [ "$(git -C "$1" config --bool --get core.sparseCheckout || true)" = true ] || return 0
+  git -C "$1" sparse-checkout list | sed -n 's|^/\(.*\)\.sh$|\1|p' | grep -vx install | paste -sd ' ' -
+}
+
+# Narrow the checkout to the installer and the given scripts, or widen it back
+# to everything with "all". Unselected scripts leave the working tree, so
+# `make link` neither links them nor keeps their old links.
+select_scripts() {
+  local dir="$1" names="$2" available name chosen=""
+  local patterns=(/install.sh /Makefile)
+
+  if [ "$names" = all ]; then
+    if [ -n "$(selected_scripts "$dir")" ]; then
+      log "Checking out all scripts ..."
+      run_git -C "$dir" sparse-checkout disable
+    fi
+    return 0
+  fi
+
+  available=$(available_scripts "$dir")
+  for name in $names; do
+    name="${name%.sh}"
+    if ! grep -qxF -- "$name" <<<"$available"; then
+      error "No script named $name. Available: $(paste -sd ' ' - <<<"$available")"
+      exit 1
+    fi
+    patterns+=("/$name.sh")
+    chosen="${chosen:+$chosen }$name"
+  done
+
+  log "Checking out only $chosen ..."
+  run_git -C "$dir" sparse-checkout set --no-cone "${patterns[@]}"
+}
+
 # Put BINDIR on PATH for future shells. Only touches ~/.zshrc for the default
 # location; a custom BINDIR is the caller's business.
 ensure_path() {
@@ -191,7 +240,7 @@ ensure_path() {
 }
 
 main() {
-  local requested="" pin=""
+  local requested="" pin="" only=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -213,6 +262,22 @@ main() {
         requested="pinned"
         pin="$2"
         shift
+        ;;
+      --only)
+        case "${2:-}" in
+          ""|*[!A-Za-z0-9_.,-]*)
+            error "--only needs script names, e.g. --only send_location"
+            exit 1
+            ;;
+        esac
+        if [ "$only" = all ]; then
+          only=""
+        fi
+        only="${only:+$only }$(tr ',' ' ' <<<"$2")"
+        shift
+        ;;
+      --all)
+        only="all"
         ;;
       *)
         error "Unknown option: $1"
@@ -238,7 +303,15 @@ main() {
     if [ ! -e "$dir/.git" ]; then
       log "Cloning $REPO_URL into $dir ..."
       mkdir -p "$(dirname "$dir")"
-      run_git clone --quiet "$REPO_URL" "$dir"
+      if [ -n "$only" ] && [ "$only" != all ]; then
+        # Start from just the installer and fetch file contents only as they
+        # are checked out; select_scripts adds the chosen scripts.
+        run_git clone --quiet --no-checkout --filter=blob:none "$REPO_URL" "$dir"
+        run_git -C "$dir" sparse-checkout set --no-cone /install.sh /Makefile
+        run_git -C "$dir" checkout -q
+      else
+        run_git clone --quiet "$REPO_URL" "$dir"
+      fi
       requested="${requested:-release}"
     fi
   fi
@@ -248,6 +321,9 @@ main() {
   if [ -n "$requested" ]; then
     git -C "$dir" config "$CHANNEL_KEY" "$requested"
   fi
+  if [ -n "$only" ]; then
+    select_scripts "$dir" "$only"
+  fi
 
   log "Linking scripts into $BINDIR ..."
   # BINDIR on make's PATH silences its path-check note; ensure_path covers that.
@@ -256,7 +332,9 @@ main() {
   done
 
   ensure_path
-  success "simple-shell-scripts is at $(git -C "$dir" describe --tags --always). Run update_shell_scripts to update again."
+  local selected
+  selected=$(selected_scripts "$dir")
+  success "simple-shell-scripts is at $(git -C "$dir" describe --tags --always)${selected:+ (only $selected)}. Run update_shell_scripts to update again."
 }
 
 # Exit on the same line: this file may be swapped for another version mid-run.
