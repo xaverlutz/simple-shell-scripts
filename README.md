@@ -56,6 +56,8 @@ update_shell_scripts --only reset_build   # swap the selection
 update_shell_scripts --all                # check out and link everything
 ```
 
+`--only` is for installs made this way. A clone you develop in (see below) stays whole.
+
 ### 🤲 Or install by hand
 
 Prefer to see every step? Clone the repo wherever you keep code and link the scripts from there:
