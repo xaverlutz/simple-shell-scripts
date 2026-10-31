@@ -15,6 +15,10 @@
 #   pinned    stay on the tag given with --tag
 # A checkout with no channel set (e.g. one you develop in) just pulls its
 # current branch.
+#
+# --only narrows an install to some scripts with a sparse checkout and
+# remembers the pick in git config, too; --all widens it back. A checkout you
+# develop in is left whole.
 
 set -euo pipefail
 
@@ -44,6 +48,7 @@ REPO_URL="${SIMPLE_SHELL_SCRIPTS_REPO:-https://github.com/xaverlutz/simple-shell
 DEFAULT_BINDIR="$HOME/.local/bin"
 BINDIR="${BINDIR:-$DEFAULT_BINDIR}"
 CHANNEL_KEY="simple-shell-scripts.channel"
+ONLY_KEY="simple-shell-scripts.only"
 
 show_help() {
   cat <<EOF
@@ -51,13 +56,19 @@ show_help() {
 $(echo -e "${BOLD}Usage:${RESET}") $(basename "$0") [OPTIONS]
 
   Install simple-shell-scripts, or update an existing install.
-  Clones (or updates) the repo, then symlinks every script into BINDIR.
+  Clones (or updates) the repo, then symlinks its scripts into BINDIR:
+  all of them, or the ones picked with --only.
   By default a fresh install follows the newest release tag (vX.Y.Z).
 
 $(echo -e "${BOLD}OPTIONS:${RESET}")
   --release     Follow the newest release tag (remembered)
   --main        Follow the tip of main (remembered)
   --tag <tag>   Pin to a specific tag, e.g. v1.2.0 (remembered)
+  --only <names>
+                Check out and link only these scripts, e.g.
+                --only send_location or --only create_branch,reset_build
+                (remembered; replaces the previous selection)
+  --all         Check out and link every script again (the default)
   -h, --help    Show this help message and exit
 
 $(echo -e "${BOLD}ENVIRONMENT:${RESET}")
@@ -170,6 +181,75 @@ update_repo() {
   esac
 }
 
+# User scripts in the checked-out commit, by name, one per line.
+available_scripts() {
+  git -C "$1" ls-tree --name-only HEAD | sed -n 's/\.sh$//p' | grep -vx install || true
+}
+
+# Scripts the install is narrowed to, space-separated; empty for all.
+selected_scripts() {
+  git -C "$1" config --get "$ONLY_KEY" || true
+}
+
+# Fail unless every name is a script in the checked-out commit.
+check_scripts() {
+  local dir="$1" names="$2" available name
+  available=$(available_scripts "$dir")
+  for name in $names; do
+    if ! grep -qxF -- "$name" <<<"$available"; then
+      error "No script named $name. Available: $(paste -sd ' ' - <<<"$available")"
+      return 1
+    fi
+  done
+}
+
+# Check out only the installer and the given scripts, or everything with
+# "all". Uses the core.sparseCheckout file, which every git version reads the
+# same way, instead of `git sparse-checkout`, whose options keep changing.
+sparse_checkout() {
+  local dir="$1" names="$2" gitdir name file
+  gitdir=$(git -C "$dir" rev-parse --absolute-git-dir)
+  file="$gitdir/info/sparse-checkout"
+
+  # read-tree resets the index to HEAD, which would drop staged changes.
+  # Unstaged edits survive, and files that have them stay checked out.
+  if [ -f "$gitdir/index" ] && ! git -C "$dir" diff --cached --quiet; then
+    error "$dir has staged changes. Commit or unstage them first."
+    exit 1
+  fi
+
+  mkdir -p "$gitdir/info"
+  if [ "$names" = all ]; then
+    printf '/*\n' >"$file"
+  else
+    printf '/install.sh\n/Makefile\n' >"$file"
+    for name in $names; do
+      printf '/%s.sh\n' "$name" >>"$file"
+    done
+    git -C "$dir" config core.sparseCheckout true
+    git -C "$dir" config core.sparseCheckoutCone false
+  fi
+  run_git -C "$dir" read-tree -mu HEAD
+
+  if [ "$names" = all ]; then
+    git -C "$dir" config core.sparseCheckout false
+    rm -f "$file"
+  fi
+}
+
+# Warn about unselected scripts that local edits kept in the working tree:
+# `make link` links whatever is there.
+warn_kept_scripts() {
+  local dir="$1" names="$2" f name
+  for f in "$dir"/*.sh; do
+    name=$(basename "$f" .sh)
+    case " install $names " in
+      *" $name "*) ;;
+      *) warning "Kept $name.sh because it has local changes, so it stays linked" ;;
+    esac
+  done
+}
+
 # Put BINDIR on PATH for future shells. Only touches ~/.zshrc for the default
 # location; a custom BINDIR is the caller's business.
 ensure_path() {
@@ -191,7 +271,7 @@ ensure_path() {
 }
 
 main() {
-  local requested="" pin=""
+  local requested="" pin="" only="" before name
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -214,6 +294,31 @@ main() {
         pin="$2"
         shift
         ;;
+      --only)
+        if [ "$only" = all ]; then
+          only=""
+        fi
+        before="$only"
+        case "${2:-}" in
+          *[!A-Za-z0-9_.,-]*) ;;
+          *)
+            for name in $(tr ',' ' ' <<<"${2:-}"); do
+              name="${name%.sh}"
+              if [ -n "$name" ]; then
+                only="${only:+$only }$name"
+              fi
+            done
+            ;;
+        esac
+        if [ "$only" = "$before" ]; then
+          error "--only needs script names, e.g. --only send_location"
+          exit 1
+        fi
+        shift
+        ;;
+      --all)
+        only="all"
+        ;;
       *)
         error "Unknown option: $1"
         show_help
@@ -230,7 +335,7 @@ main() {
     fi
   done
 
-  local dir
+  local dir fresh="" channel
   dir=$(script_dir)
 
   if [ -z "$dir" ] || [ ! -e "$dir/.git" ] || [ ! -f "$dir/Makefile" ]; then
@@ -238,15 +343,49 @@ main() {
     if [ ! -e "$dir/.git" ]; then
       log "Cloning $REPO_URL into $dir ..."
       mkdir -p "$(dirname "$dir")"
-      run_git clone --quiet "$REPO_URL" "$dir"
+      if [ -n "$only" ] && [ "$only" != all ]; then
+        # Start from just the installer and fetch file contents only as they
+        # are checked out; the chosen scripts are added once they are checked.
+        run_git clone --quiet --no-checkout --filter=blob:none "$REPO_URL" "$dir"
+        sparse_checkout "$dir" ""
+      else
+        run_git clone --quiet "$REPO_URL" "$dir"
+      fi
+      fresh=1
       requested="${requested:-release}"
     fi
   fi
 
+  channel="${requested:-$(git -C "$dir" config --get "$CHANNEL_KEY" || true)}"
+  if [ -n "$only" ] && [ "$only" != all ] && [ -z "$channel" ]; then
+    error "$dir has no update channel, so it looks like a checkout you develop in. --only would hide its other files; add --release or --main to treat it as an install."
+    exit 1
+  fi
+
   # Remember a requested channel only once switching to it has worked.
-  update_repo "$dir" "${requested:-$(git -C "$dir" config --get "$CHANNEL_KEY" || true)}" "$pin"
+  update_repo "$dir" "$channel" "$pin"
   if [ -n "$requested" ]; then
     git -C "$dir" config "$CHANNEL_KEY" "$requested"
+  fi
+
+  if [ "$only" = all ]; then
+    if [ "$(git -C "$dir" config --bool --get core.sparseCheckout || true)" = true ]; then
+      log "Checking out all scripts ..."
+      sparse_checkout "$dir" all
+    fi
+    git -C "$dir" config --unset "$ONLY_KEY" || true
+  elif [ -n "$only" ]; then
+    if ! check_scripts "$dir" "$only"; then
+      if [ -n "$fresh" ]; then
+        rm -rf "$dir"
+        git_log "Removed the new clone at $dir."
+      fi
+      exit 1
+    fi
+    log "Checking out only $only ..."
+    sparse_checkout "$dir" "$only"
+    git -C "$dir" config "$ONLY_KEY" "$only"
+    warn_kept_scripts "$dir" "$only"
   fi
 
   log "Linking scripts into $BINDIR ..."
@@ -256,7 +395,9 @@ main() {
   done
 
   ensure_path
-  success "simple-shell-scripts is at $(git -C "$dir" describe --tags --always). Run update_shell_scripts to update again."
+  local selected
+  selected=$(selected_scripts "$dir")
+  success "simple-shell-scripts is at $(git -C "$dir" describe --tags --always)${selected:+ (only $selected)}. Run update_shell_scripts to update again."
 }
 
 # Exit on the same line: this file may be swapped for another version mid-run.

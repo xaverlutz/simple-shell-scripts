@@ -102,3 +102,17 @@ jobs:
           "$BINDIR/update_shell_scripts" --help
           "$BINDIR/create_branch" --help
           test ! -e "$BINDIR/install"
+
+      # A fresh install from this checkout, which gets a tag to follow. The
+      # checkout itself has no channel, so --only must refuse to narrow it.
+      - name: install.sh --only links just that script, --all brings back the rest
+        run: |
+          export BINDIR="$RUNNER_TEMP/onlybin"
+          if ./install.sh --only reset_build; then exit 1; fi
+          git -c tag.gpgSign=false tag v99.0.0
+          export SIMPLE_SHELL_SCRIPTS_REPO="file://$PWD" SIMPLE_SHELL_SCRIPTS_DIR="$RUNNER_TEMP/only-clone"
+          bash -c "$(cat install.sh)" install.sh --only reset_build
+          test "$(ls "$BINDIR" | paste -sd ' ' -)" = "reset_build update_shell_scripts"
+          test ! -e "$SIMPLE_SHELL_SCRIPTS_DIR/create_branch.sh"
+          "$BINDIR/update_shell_scripts" --all
+          "$BINDIR/create_branch" --help

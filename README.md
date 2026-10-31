@@ -41,6 +41,23 @@ That's it. The installer:
 
 Open a new terminal window and the commands are ready. The only requirement is the Xcode Command Line Tools (`xcode-select --install`).
 
+### 🎯 Just one script
+
+Only need one of them? Add `--only` with its name, and the clone checks out just that script (plus the installer), so only it gets linked:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/xaverlutz/simple-shell-scripts/main/install.sh)" install.sh --only send_location
+```
+
+Pick a few with commas, e.g. `--only create_branch,reset_build`. The selection is remembered, so `update_shell_scripts` keeps updating just those, and scripts added in later releases stay out. Change your mind any time:
+
+```bash
+update_shell_scripts --only reset_build   # swap the selection
+update_shell_scripts --all                # check out and link everything
+```
+
+`--only` is for installs made this way. A clone you develop in (see below) stays whole.
+
 ### 🤲 Or install by hand
 
 Prefer to see every step? Clone the repo wherever you keep code and link the scripts from there:
