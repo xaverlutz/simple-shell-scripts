@@ -16,10 +16,9 @@
 # covered when any of its lines was traced.
 #
 # Writes OUT/lcov.info (for editor gutters, and what compare.awk reads for
-# the PR comment), OUT/cobertura.xml (uploaded to GitHub Code Quality),
-# OUT/summary.md, and OUT/annotated/<script> with each line marked "> "
-# (ran), "! " (never ran) or "  " (not a statement). Prints a table and
-# exits 1 if total coverage is below MIN percent.
+# the PR comment), OUT/summary.md, and OUT/annotated/<script> with each line
+# marked "> " (ran), "! " (never ran) or "  " (not a statement). Prints a
+# table and exits 1 if total coverage is below MIN percent.
 
 BEGIN {
   if (out == "") out = "coverage"
@@ -186,14 +185,13 @@ function finish(    l, h, n, covered, missed, ranges, rs, re, prevmiss, cnt, ann
     if (h && ((cur, l) in hits) && hits[cur, l] > shits[h]) shits[h] = hits[cur, l]
   }
 
-  n = 0; covered = 0; ranges = ""; rs = 0; re = 0; xml = ""
+  n = 0; covered = 0; ranges = ""; rs = 0; re = 0
   lc = out "/lcov.info"
   printf "TN:\nSF:%s\n", cur >> lc
   for (l = 1; l <= nlines; l++) {
     if (kind[l] != "head") continue
     n++; cnt = shits[l] + 0
     printf "DA:%d,%d\n", l, cnt >> lc
-    xml = xml sprintf("          <line number=\"%d\" hits=\"%d\"/>\n", l, cnt)
     if (cnt > 0) {
       covered++
       if (rs) { ranges = add_range(ranges, rs, re); rs = 0 }
@@ -216,42 +214,7 @@ function finish(    l, h, n, covered, missed, ranges, rs, re, prevmiss, cnt, ann
 
   nfiles++
   fname[nfiles] = cur; fstmts[nfiles] = n; fmiss[nfiles] = n - covered; franges[nfiles] = ranges
-  fxml[nfiles] = xml
   tstmts += n; tcov += covered
-}
-
-function rate(c, n) { return sprintf("%.4f", n ? c / n : 1) }
-
-function xmlesc(s) {
-  gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s); gsub(/>/, "\\&gt;", s); gsub(/"/, "\\&quot;", s)
-  return s
-}
-
-# Cobertura XML, which CI uploads to GitHub Code Quality's code coverage
-# (actions/upload-code-coverage). Each script is a class in one package;
-# each statement is a line, with no branch data. Paths are relative to the
-# repository root.
-function cobertura(    f, i, now) {
-  f = out "/cobertura.xml"
-  srand(); now = srand()
-  print "<?xml version=\"1.0\" ?>" > f
-  print "<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">" > f
-  printf "<coverage line-rate=\"%s\" branch-rate=\"0\" lines-covered=\"%d\" lines-valid=\"%d\"" \
-    " branches-covered=\"0\" branches-valid=\"0\" complexity=\"0\" version=\"1\" timestamp=\"%d000\">\n", \
-    rate(tcov, tstmts), tcov, tstmts, now > f
-  print "  <sources>\n    <source>.</source>\n  </sources>" > f
-  print "  <packages>" > f
-  printf "    <package name=\".\" line-rate=\"%s\" branch-rate=\"0\" complexity=\"0\">\n", rate(tcov, tstmts) > f
-  print "      <classes>" > f
-  for (i = 1; i <= nfiles; i++) {
-    printf "        <class name=\"%s\" filename=\"%s\" line-rate=\"%s\" branch-rate=\"0\" complexity=\"0\">\n", \
-      xmlesc(fname[i]), xmlesc(fname[i]), rate(fstmts[i] - fmiss[i], fstmts[i]) > f
-    print "          <methods/>\n          <lines>" > f
-    printf "%s", fxml[i] > f
-    print "          </lines>\n        </class>" > f
-  }
-  print "      </classes>\n    </package>\n  </packages>\n</coverage>" > f
-  close(f)
 }
 
 function add_range(r, a, b) {
@@ -270,7 +233,7 @@ function report(    i, fmt, sum, total) {
     printf fmt, fname[i], fstmts[i], fmiss[i], pct(fstmts[i] - fmiss[i], fstmts[i]), clip(franges[i], 40)
   printf "%s\n", "------------------------------------------------------------------------------"
   printf fmt, "TOTAL", tstmts, tstmts - tcov, pct(tcov, tstmts), ""
-  printf "\nPer-line detail: %s/annotated/   lcov: %s/lcov.info   Cobertura: %s/cobertura.xml\n", out, out, out
+  printf "\nPer-line detail: %s/annotated/   lcov: %s/lcov.info\n", out, out
 
   sum = out "/summary.md"
   print "| File | Stmts | Miss | Cover |" > sum
@@ -279,8 +242,6 @@ function report(    i, fmt, sum, total) {
     printf "| `%s` | %d | %d | %s |\n", fname[i], fstmts[i], fmiss[i], pct(fstmts[i] - fmiss[i], fstmts[i]) > sum
   printf "| **Total** | **%d** | **%d** | **%s** |\n", tstmts, tstmts - tcov, pct(tcov, tstmts) > sum
   close(sum)
-
-  cobertura()
 
   total = tstmts ? 100 * tcov / tstmts : 100
   if (total < min + 0) {
