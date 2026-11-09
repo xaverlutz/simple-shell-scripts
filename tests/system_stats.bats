@@ -16,7 +16,8 @@ setup() {
 
   TMP="$(mktemp -d)"
   FIX="$BATS_TEST_DIRNAME/fixtures/system_stats"
-  LIB="$TMP/system_stats_functions.zsh"
+  # Same basename as the script, so `make coverage` credits its lines to it.
+  LIB="$TMP/system_stats.sh"
   sed '/^# --- Main ---/,$d' "$BATS_TEST_DIRNAME/../system_stats.sh" > "$LIB"
   # Make sure the cut really happened, or a test could start the dashboard.
   grep -q '^collect_probe()' "$LIB"
@@ -32,9 +33,11 @@ teardown() {
 }
 
 # Run zsh code with the script's functions loaded. -f keeps the user's own
-# zsh startup files out of it.
+# zsh startup files out of it, so under `make coverage` the line tracer is
+# sourced here explicitly.
 zsh_run() {
-  run zsh -f -c 'source "$LIB" || exit 99
+  run zsh -f -c 'if [[ -n ${COV_ZSH-} ]]; then source "$COV_ZSH"; fi
+source "$LIB" || exit 99
 '"$1"
 }
 
