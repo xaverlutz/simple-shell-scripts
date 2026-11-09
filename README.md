@@ -121,7 +121,7 @@ Pre-release tags such as `v1.2.0-rc1` are skipped.
 
 ### 🌱 `create_branch`
 
-Fetches and pulls the base branch (`main` by default), then creates your new branch from it. Optionally makes a first commit, too (an empty one if nothing is staged). If a git step fails, it stops instead of branching off the wrong base.
+Fetches and pulls the base branch (`main` by default), then creates your new branch from it. Optionally makes a first commit, too (an empty one if nothing is staged). If the base branch can't be switched to or fast-forwarded, it stops (and switches you back) instead of branching off the wrong base. Without an `origin`, or offline, it uses the local base branch as it is.
 
 ```bash
 create_branch my-feature                               # from main

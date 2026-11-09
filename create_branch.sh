@@ -11,8 +11,8 @@ RESET='\033[0m'
 
 log()     { echo -e "${BOLD}${CYAN}▶${RESET} $1"; }
 success() { echo -e "${BOLD}${GREEN}✅ $1${RESET}"; }
-error()   { echo -e "${BOLD}${RED}❌ $1${RESET}"; }
-warning() { echo -e "${BOLD}${YELLOW}⚠ $1${RESET}"; }
+error()   { echo -e "${BOLD}${RED}❌ $1${RESET}" >&2; }
+warning() { echo -e "${BOLD}${YELLOW}⚠ $1${RESET}" >&2; }
 git_log() { echo -e "${DIM}  $1${RESET}"; }
 
 # Wrap git calls to prefix output
@@ -23,12 +23,24 @@ run_git() {
   return "${PIPESTATUS[0]}"
 }
 
+# Where the script started, so a failure before the new branch exists can
+# put the user back there instead of leaving them on the base branch.
+start_ref=""
+
 # Run a git step through run_git, and stop if it fails, so a failed checkout
 # or pull never ends in a branch off the wrong base and a success message.
+# $1 is the error to show; the rest is the git command.
 git_step() {
-  local what="$1"; shift
+  local message="$1"; shift
   if ! run_git "$@"; then
-    error "${what} failed — no branch was created."
+    error "$message"
+    if [ -n "$start_ref" ]; then
+      if git checkout -q "$start_ref" -- >/dev/null 2>&1; then
+        warning "Switched back to '${start_ref}'."
+      else
+        warning "Still on '$(git symbolic-ref --quiet --short HEAD || git rev-parse --short HEAD)' — could not switch back to '${start_ref}'."
+      fi
+    fi
     exit 1
   fi
 }
@@ -73,6 +85,13 @@ for arg in "$@"; do
     --on-base-branch)
       use_current_branch=true
       ;;
+    -*)
+      # A typo'd option must not end up as a branch name, or reach
+      # `git checkout` as an option (`-f` would discard local changes).
+      error "Unknown option: $arg"
+      show_help >&2
+      exit 1
+      ;;
     *)
       args+=("$arg")
       ;;
@@ -107,6 +126,11 @@ else
   commit_message="${args[2]}"
 fi
 
+if ! git check-ref-format --branch "$branch_name" >/dev/null 2>&1; then
+  error "'${branch_name}' is not a valid branch name."
+  exit 1
+fi
+
 # Check if the feature branch exists. An exact ref lookup: grepping
 # `git branch` matched any branch containing the name.
 if git show-ref --verify --quiet "refs/heads/${branch_name}"; then
@@ -114,35 +138,53 @@ if git show-ref --verify --quiet "refs/heads/${branch_name}"; then
   exit 1
 fi
 
-# Fetch origin
-log "Fetching origin changes ..."
-git_step "Fetching origin" fetch --prune origin
-
-# Ensure that we are on the base branch ...
-log "Switching to '${BOLD}${base_branch}${RESET}' ..."
-git_step "Switching to '${base_branch}'" checkout "$base_branch"
-
-# ... pull any changes, if the base branch exists on origin at all ...
-if git show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
-  log "Pulling latest changes ..."
-  git_step "Pulling '${base_branch}'" pull origin "$base_branch"
-  log "'${BOLD}${base_branch}${RESET}' is up to date 🔁"
+# Fetch origin. Without an origin, or offline, carry on with the local base
+# branch rather than refusing to branch at all.
+fetched=false
+if ! git remote get-url origin >/dev/null 2>&1; then
+  warning "No 'origin' remote — using the local '${base_branch}' as it is."
 else
+  log "Fetching origin changes ..."
+  if run_git fetch --prune origin; then
+    fetched=true
+  else
+    warning "Could not fetch origin — using the local '${base_branch}' as it is."
+  fi
+fi
+
+# Ensure that we are on the base branch ... The `--` makes git take the base
+# as a branch only: without it, a name that is not a branch but matches a
+# file or folder checks that path out, throwing away local edits there.
+orig_ref="$(git symbolic-ref --quiet --short HEAD || git rev-parse --short HEAD)"
+log "Switching to '${BOLD}${base_branch}${RESET}' ..."
+git_step "Could not switch to '${base_branch}' — no branch was created." \
+  checkout "$base_branch" --
+[ "$orig_ref" = "$base_branch" ] || start_ref="$orig_ref"
+
+# ... fast-forward it to origin, if it is there at all. --ff-only, so a base
+# branch that has diverged stops the script cleanly instead of leaving a
+# merge or rebase half done ...
+if [ "$fetched" = "true" ] && git show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
+  log "Pulling latest changes ..."
+  git_step "Could not fast-forward '${base_branch}' to origin — no branch was created." \
+    pull --ff-only origin "$base_branch"
+  log "'${BOLD}${base_branch}${RESET}' is up to date 🔁"
+elif [ "$fetched" = "true" ]; then
   warning "'${base_branch}' is not on origin — using the local branch as it is."
 fi
 
 # ... and create new branch
 log "Creating branch '${BOLD}${branch_name}${RESET}' ..."
-git_step "Creating '${branch_name}'" checkout -b "$branch_name"
+git_step "Could not create '${branch_name}' — no branch was created." \
+  checkout -b "$branch_name"
+start_ref=""
 
 # Optional commit message. --allow-empty, since a freshly created branch
 # usually has nothing staged and the commit would otherwise fail.
 if [ -n "$commit_message" ]; then
   log "Creating initial commit ..."
-  if ! run_git commit --allow-empty -m "$commit_message"; then
-    error "Branch '${branch_name}' was created, but the initial commit failed."
-    exit 1
-  fi
+  git_step "Branch '${branch_name}' was created, but the initial commit failed." \
+    commit --allow-empty -m "$commit_message"
 fi
 
 success "Branch '${branch_name}' created successfully!"

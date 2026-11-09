@@ -10,7 +10,7 @@ RESET='\033[0m'
 
 log()     { echo -e "${BOLD}${CYAN}▶${RESET} $1"; }
 success() { echo -e "${BOLD}${GREEN}✅ $1${RESET}"; }
-error()   { echo -e "${BOLD}${RED}❌ $1${RESET}"; }
+error()   { echo -e "${BOLD}${RED}❌ $1${RESET}" >&2; }
 warning() { echo -e "${BOLD}${YELLOW}⚠ $1${RESET}"; }
 
 show_help() {

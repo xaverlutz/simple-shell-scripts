@@ -201,6 +201,90 @@ subject_of() {
   [[ "$output" != *"is up to date"* ]]
 }
 
+@test "stops on a diverged base branch without merging, and switches back" {
+  git checkout -q -b topic
+  git checkout -q main
+  push_from_elsewhere main "teammate work"
+  echo "mine" > mine.txt
+  git add . && git commit -qm "diverging local work"
+  git checkout -q topic
+  # A merge-style pull would leave main half merged; --ff-only must not.
+  git config --global pull.ff false
+
+  run "$SCRIPT" feature
+  [ "$status" -eq 1 ]
+  ! branch_exists feature
+  [ "$(current_branch)" = "topic" ]
+  [ "$(subject_of main)" = "diverging local work" ]
+  [ ! -e .git/MERGE_HEAD ]
+  [[ "$output" == *"Switched back to 'topic'"* ]]
+}
+
+@test "a base that names a folder, not a branch, leaves local edits alone" {
+  # Without `--`, git checkout took 'src' as a path and threw the edit away.
+  git checkout -q -b topic
+  mkdir src && echo "a" > src/f
+  git add . && git commit -qm "add src"
+  echo "unsaved" >> src/f
+
+  run "$SCRIPT" feature src
+  [ "$status" -eq 1 ]
+  ! branch_exists feature
+  [ "$(current_branch)" = "topic" ]
+  grep -q "unsaved" src/f
+}
+
+@test "rejects an unknown option instead of passing it to git" {
+  # `-f` reached `git checkout -f` and discarded local changes.
+  echo "unsaved" >> README.md
+
+  run "$SCRIPT" feature -f
+  [ "$status" -eq 1 ]
+  ! branch_exists feature
+  grep -q "unsaved" README.md
+  [[ "$output" == *"Unknown option: -f"* ]]
+}
+
+@test "rejects an invalid branch name before touching anything" {
+  git checkout -q -b topic
+
+  run "$SCRIPT" "bad..name"
+  [ "$status" -eq 1 ]
+  [ "$(current_branch)" = "topic" ]
+  [[ "$output" == *"not a valid branch name"* ]]
+}
+
+@test "works in a repo without an origin remote" {
+  git remote remove origin
+
+  run "$SCRIPT" feature
+  [ "$status" -eq 0 ]
+  [ "$(current_branch)" = "feature" ]
+  [[ "$output" == *"No 'origin' remote"* ]]
+}
+
+@test "carries on with the local base when origin can't be reached" {
+  git remote set-url origin "$TMP/gone.git"
+
+  run "$SCRIPT" feature
+  [ "$status" -eq 0 ]
+  [ "$(current_branch)" = "feature" ]
+  [[ "$output" == *"Could not fetch origin"* ]]
+  [[ "$output" != *"Pulling"* ]]
+}
+
+@test "reports a failed initial commit but keeps the branch" {
+  printf '#!/bin/sh\nexit 1\n' > .git/hooks/commit-msg
+  chmod +x .git/hooks/commit-msg
+
+  run "$SCRIPT" feature main "Start the feature"
+  [ "$status" -eq 1 ]
+  branch_exists feature
+  [ "$(current_branch)" = "feature" ]
+  [[ "$output" == *"initial commit failed"* ]]
+  [[ "$output" != *"created successfully"* ]]
+}
+
 # --- Help and environment --------------------------------------------------
 
 @test "prints usage and creates nothing without a branch name" {

@@ -7,6 +7,8 @@
 # Every test runs in a throwaway directory, so nothing near your real
 # projects is touched.
 
+bats_require_minimum_version 1.5.0
+
 setup() {
   SCRIPT="$BATS_TEST_DIRNAME/../reset_build.sh"
   TMP="$(mktemp -d)"
@@ -80,6 +82,14 @@ make_build_dir() {
   [ "$status" -eq 1 ]
   [ -d .build ]
   [[ "$output" == *"Unknown argument: --dry-run"* ]]
+}
+
+@test "unknown arguments are reported on stderr, not stdout" {
+  run --separate-stderr "$SCRIPT" --dry-run
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"Unknown argument: --dry-run"* ]]
+  [[ "$stderr" == *"Usage:"* ]]
 }
 
 # --- Help ------------------------------------------------------------------
