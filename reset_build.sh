@@ -10,7 +10,7 @@ RESET='\033[0m'
 
 log()     { echo -e "${BOLD}${CYAN}▶${RESET} $1"; }
 success() { echo -e "${BOLD}${GREEN}✅ $1${RESET}"; }
-error()   { echo -e "${BOLD}${RED}❌ $1${RESET}"; }
+error()   { echo -e "${BOLD}${RED}❌ $1${RESET}" >&2; }
 warning() { echo -e "${BOLD}${YELLOW}⚠ $1${RESET}"; }
 
 show_help() {
@@ -34,6 +34,12 @@ for arg in "$@"; do
     -h|--help)
       show_help
       exit 0
+      ;;
+    *)
+      # Never fall through to deleting on a typo like --dry-run.
+      error "Unknown argument: $arg"
+      show_help >&2
+      exit 1
       ;;
   esac
 done

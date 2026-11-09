@@ -4,21 +4,18 @@
 # tests that use `zsh -f` (which skips .zshenv). Nothing happens unless
 # COV_DIR is set.
 #
-# A DEBUG trap appends "file:line" for every command to $COV_DIR/trace. Inside
-# a function $LINENO counts from the function's first line, and
-# $funcsourcetrace[1] gives "file:line" of its definition, so the two add up
-# to the line in the file. At the top level of a script %x and $LINENO are
-# already right. The trap is an `if` so it never leaves a failing status
-# behind for ERR_EXIT to trip over.
+# TRAPDEBUG runs before every command and appends "file:line" to
+# $COV_DIR/trace. $funcfiletrace[1] is where the trap was triggered from,
+# that is the command about to run, as a line in its file. The function form
+# matters: a `trap '...' DEBUG` list overwrites $pipestatus for the command
+# that follows, the function form leaves it (and $?) alone. It always returns
+# 0: a TRAPDEBUG that returns non-zero makes a script with ERR_EXIT exit.
 
 [[ -n ${COV_DIR:-} ]] || return 0
 exec {__cov_fd}>>"$COV_DIR/trace" || return 0
 typeset -g __cov_fd
 
-trap '
-  if [[ -n ${funcsourcetrace[1]-} ]]; then
-    print -ru $__cov_fd -- "${funcsourcetrace[1]%:*}:$(( ${funcsourcetrace[1]##*:} + LINENO ))"
-  else
-    print -ru $__cov_fd -- "${(%):-%x}:$LINENO"
-  fi
-' DEBUG
+TRAPDEBUG() {
+  print -ru $__cov_fd -- "${funcfiletrace[1]-}" 2>/dev/null
+  return 0
+}
