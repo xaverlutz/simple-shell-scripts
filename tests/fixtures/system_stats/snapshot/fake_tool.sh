@@ -6,6 +6,8 @@
 # $SNAPSHOT_DIR is this directory; the parser fixtures sit one level up.
 #
 # All values are made up; only the formats are copied from real output.
+# With FAKE_NO_COUNTERS set, netstat and the disk statistics print nothing,
+# like a reading that failed.
 
 snap=$SNAPSHOT_DIR
 fix=$SNAPSHOT_DIR/..
@@ -20,7 +22,7 @@ case ${0##*/} in
       *IODeviceTree*)         cat "$snap/ioreg_cpus.txt" ;;
       *IOAccelerator*)        cat "$snap/ioreg_gpu.txt" ;;
       *AppleSmartBattery*)    cat "$snap/ioreg_battery.txt" ;;
-      *IOBlockStorageDriver*) cat "$snap/ioreg_disk.txt" ;;
+      *IOBlockStorageDriver*) [ -n "${FAKE_NO_COUNTERS:-}" ] || cat "$snap/ioreg_disk.txt" ;;
       *BatteryPercent*)       cat "$snap/ioreg_hid.txt" ;;
     esac ;;
   system_profiler)
@@ -57,7 +59,7 @@ case ${0##*/} in
   who)
     printf 'tester   console  Nov  9 08:00\ntester   ttys000  Nov  9 09:12\n' ;;
   netstat)
-    cat "$snap/netstat.txt" ;;
+    [ -n "${FAKE_NO_COUNTERS:-}" ] || cat "$snap/netstat.txt" ;;
   df)
     cat "$snap/df.txt" ;;
   ps)   # sorted by CPU (-r) or by memory (-m)

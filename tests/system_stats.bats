@@ -188,6 +188,13 @@ snapshot() {
   [[ "$output" != *"Bluetooth Controller"* ]] || false
 }
 
+@test "parse_bluetooth: lists the connected devices' addresses on request" {
+  zsh_run 'parse_bluetooth addresses < "$FIX/bluetooth.txt"'
+  [ "$status" -eq 0 ]
+  # Not the controller's own address, nor the devices that aren't connected
+  [ "$output" = "$(printf '00:00:00:00:00:02\n00:00:00:00:00:03\n00:00:00:00:00:04')" ]
+}
+
 @test "parse_bluetooth: prints nothing when no device is connected" {
   zsh_run 'sed "/^      Connected:/,/^      Not Connected:/{/Not Connected/!d;}" "$FIX/bluetooth.txt" | parse_bluetooth'
   [ "$status" -eq 0 ]
@@ -401,13 +408,16 @@ fake_probe() {
   zsh_run '
     for SKY_MODE in day night snow fireworks; do
       sky_state
-      print -r -- "$SKY_MODE night=$SKY_NIGHT fireworks=$SKY_FIREWORKS"
+      print -r -- "$SKY_MODE night=$SKY_NIGHT snow=$SKY_SNOW fireworks=$SKY_FIREWORKS"
     done
   '
   [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "day night=0 fireworks=0" ]
-  [ "${lines[1]}" = "night night=1 fireworks=0" ]
-  [ "${lines[3]}" = "fireworks night=1 fireworks=1" ]
+  [ "${lines[0]}" = "day night=0 snow=0 fireworks=0" ]
+  [ "${lines[1]}" = "night night=1 snow=0 fireworks=0" ]
+  # Snow and fireworks only switch their own effect on; night and snow are
+  # still up to the clock and the calendar.
+  [[ "${lines[2]}" == "snow night="[01]" snow=1 fireworks="[01] ]] || false
+  [[ "${lines[3]}" == "fireworks night=1 snow="[01]" fireworks=1" ]] || false
 }
 
 # --- --once snapshot -------------------------------------------------------
@@ -415,31 +425,31 @@ fake_probe() {
 @test "once: draws every panel from the macOS tools' output" {
   snapshot
   [ "$status" -eq 0 ]
-  [[ "${lines[0]}" == *"Test Mac · MacBook Pro · macOS 15.1"* ]]
+  [[ "${lines[0]}" == *"Test Mac · MacBook Pro · macOS 15.1"* ]] || false
   local panel
   for panel in CPU MEMORY THERMALS POWER GPU NETWORK DISK SYSTEM BLUETOOTH PROCESSES; do
     [[ "$output" == *"$panel"* ]] || { echo "missing panel: $panel"; return 1; }
   done
-  [[ "$output" == *"Apple M4 · 4 performance + 6 efficiency"* ]]
-  [[ "$output" == *"load     2.55  2.65  3.20"* ]]
-  [[ "$output" == *"8.9G / 16G"* ]]
-  [[ "$output" == *"swap 512M of 2.0G"* ]]
-  [[ "$output" == *"discharging · 5:12 remaining"* ]]
-  [[ "$output" == *"health 95% · cycles 87 · 12.45V"* ]]
-  [[ "$output" == *"Apple M4 · 10 cores"* ]]
-  [[ "$output" == *"memory in use 768M"* ]]
-  [[ "$output" == *"en0 · Wi-Fi · 192.0.2.23"* ]]
-  [[ "$output" == *"393G / 926G"* ]]
-  [[ "$output" == *"macOS 15.1 (24B83) · Darwin 24.1.0"* ]]
-  [[ "$output" == *"1083 processes · 3 running · 5026 threads"* ]]
-  [[ "$output" == *"Mac16,1 · 16G memory · 2 logged in"* ]]
-  [[ "$output" == *"44.6    180M  WindowServer"* ]]
+  [[ "$output" == *"Apple M4 · 4 performance + 6 efficiency"* ]] || false
+  [[ "$output" == *"load     2.55  2.65  3.20"* ]] || false
+  [[ "$output" == *"8.9G / 16G"* ]] || false
+  [[ "$output" == *"swap 512M of 2.0G"* ]] || false
+  [[ "$output" == *"discharging · 5:12 remaining"* ]] || false
+  [[ "$output" == *"health 95% · cycles 87 · 12.45V"* ]] || false
+  [[ "$output" == *"Apple M4 · 10 cores"* ]] || false
+  [[ "$output" == *"memory in use 768M"* ]] || false
+  [[ "$output" == *"en0 · Wi-Fi · 192.0.2.23"* ]] || false
+  [[ "$output" == *"393G / 926G"* ]] || false
+  [[ "$output" == *"macOS 15.1 (24B83) · Darwin 24.1.0"* ]] || false
+  [[ "$output" == *"1083 processes · 3 running · 5026 threads"* ]] || false
+  [[ "$output" == *"Mac16,1 · 16G memory · 2 logged in"* ]] || false
+  [[ "$output" == *"44.6    180M  WindowServer"* ]] || false
 }
 
 @test "once: points to the Command Line Tools when there's no sensor helper" {
   snapshot
   [ "$status" -eq 0 ]
-  [[ "$output" == *"xcode-select --install"* ]]
+  [[ "$output" == *"xcode-select --install"* ]] || false
 }
 
 @test "once: shows a battery device that only ioreg reports" {
@@ -448,9 +458,20 @@ fake_probe() {
   # the device before and crashed bt_lines with a bad math expression.
   snapshot
   [ "$status" -eq 0 ]
-  [[ "$output" != *"bad math expression"* ]]
-  [[ "$output" == *"Living Room Speaker · speaker"* ]]
-  [[ "$output" == *"│ Magic Trackpad "* ]]
+  [[ "$output" != *"bad math expression"* ]] || false
+  [[ "$output" == *"Living Room Speaker · speaker"* ]] || false
+  [[ "$output" == *"│ Magic Trackpad "* ]] || false
+}
+
+@test "collect_bluetooth: lists a device ioreg and system_profiler both report once" {
+  # ioreg names the keyboard by its model, "Magic Keyboard with Touch ID",
+  # but it has the address system_profiler lists for "Magic Keyboard". A
+  # second ioreg entry without an address is matched by its name instead.
+  # (Checked on S_BT itself: the panel only has room for four devices.)
+  fake_macos_tools
+  zsh_run 'collect_bluetooth; print -r -- "$S_BT" | cut -f1'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'Test AirPods Pro\nMagic Keyboard\nLiving Room Speaker\nMagic Trackpad')" ]
 }
 
 # The widths of a snapshot's lines, one per distinct width. Counted in the
@@ -482,36 +503,92 @@ snapshot_widths() {
 # These run the script itself. Every case exits while parsing its options,
 # before it checks for macOS or reads any tool.
 
+# Run system_stats.sh with these options. -f keeps the user's own zsh startup
+# files out of it; under `make coverage` the line tracer is loaded instead.
+run_script() {
+  run zsh -f -c 'if [[ -n ${COV_ZSH-} ]]; then source "$COV_ZSH"; fi
+source "$0" "$@"' "$BATS_TEST_DIRNAME/../system_stats.sh" "$@"
+}
+
 @test "--help prints usage and exits 0" {
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --help
+  run_script --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"USAGE"* ]]
-  [[ "$output" == *"system_stats.sh --once"* ]]
+  [[ "$output" == *"USAGE"* ]] || false
+  [[ "$output" == *"system_stats.sh --once"* ]] || false
 }
 
 @test "rejects an --interval outside 1-60 seconds" {
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --interval 0
+  run_script --interval 0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--interval needs whole seconds from 1 to 60"* ]]
+  [[ "$output" == *"--interval needs whole seconds from 1 to 60"* ]] || false
 
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --interval=abc
+  run_script --interval=abc
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--interval needs whole seconds"* ]]
+  [[ "$output" == *"--interval needs whole seconds"* ]] || false
 }
 
 @test "rejects an unknown --theme or --sky" {
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --theme plaid
+  run_script --theme plaid
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--theme needs one of: turtle, ocean, sunset, mono"* ]]
+  [[ "$output" == *"--theme needs one of: turtle, ocean, sunset, mono"* ]] || false
 
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --sky rain
+  run_script --sky rain
   [ "$status" -ne 0 ]
-  [[ "$output" == *"--sky needs one of"* ]]
+  [[ "$output" == *"--sky needs one of"* ]] || false
+}
+
+@test "takes --theme=NAME, --sky=MODE and --interval=N too" {
+  # A valid option followed by an unknown one: only the unknown one is refused
+  local opt
+  for opt in --theme=ocean --sky=night --interval=5; do
+    run_script "$opt" --bogus
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Unknown option: --bogus"* ]] || { echo "refused $opt"; return 1; }
+  done
+
+  run_script --theme=plaid
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--theme needs one of"* ]] || false
+
+  run_script --sky=rain
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--sky needs one of"* ]] || false
 }
 
 @test "rejects unknown options with the usage" {
-  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --bogus
+  run_script --bogus
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Unknown option: --bogus"* ]]
-  [[ "$output" == *"USAGE"* ]]
+  [[ "$output" == *"Unknown option: --bogus"* ]] || false
+  [[ "$output" == *"USAGE"* ]] || false
+}
+
+# --- Live-mode details -----------------------------------------------------
+
+@test "footer_keys: offers the theme key only with 256 colors" {
+  zsh_run '
+    C256=0; footer_keys; print -r -- "$REPLY"
+    C256=1; footer_keys; print -r -- "$REPLY"
+  '
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" != *" t  theme"* ]] || false
+  [[ "${lines[1]}" == *" t  theme"* ]] || false
+}
+
+@test "collect_dynamic: a missed counter reading gives no rate, not a spike" {
+  # Without a reading, the totals used to count as zero: a negative rate,
+  # then everything since boot as one sample's worth.
+  fake_macos_tools
+  zsh_run '
+    show() { print -r -- "net=[$S_NET_RX/$S_NET_TX] disk=[$S_DISK_READ/$S_DISK_WRITE]"; }
+    collect_dynamic; PREV_T=$(( PREV_T - 2 ))
+    FAKE_NO_COUNTERS=1 collect_dynamic; PREV_T=$(( PREV_T - 2 )); show
+    collect_dynamic; PREV_T=$(( PREV_T - 2 )); show
+    collect_dynamic; show
+  '
+  [ "$status" -eq 0 ]
+  # The missed reading and the one after it show no rate; then the counters
+  # (unchanged in the fixtures) give zero.
+  [ "${lines[0]}" = "net=[/] disk=[/]" ]
+  [ "${lines[1]}" = "net=[/] disk=[/]" ]
+  [[ "${lines[2]}" == "net=[0"*"/0"*"] disk=[0"*"/0"*"]" ]] || false
 }

@@ -624,29 +624,49 @@ collect_probe() {
 # Connected Bluetooth devices, one per line: name<TAB>kind<TAB>part=percent ...
 # AirPods report left, right and case; keyboards and mice a single battery.
 collect_bluetooth() {
-    local out extra line
+    local out extra line addr dev known
     out=$(system_profiler SPBluetoothDataType 2>/dev/null)
     if [[ -z $out ]]; then S_BT_POWER="" S_BT=""; return; fi
     if [[ $out == *"State: On"* ]]; then S_BT_POWER=on; else S_BT_POWER=off; fi
     S_BT=$(parse_bluetooth <<<"$out")
-    # Apple keyboards, mice and trackpads also report through IOKit
+    known=$'\n'$(parse_bluetooth addresses <<<"$out")$'\n'
+    # Apple keyboards, mice and trackpads also report through IOKit, as
+    # address<TAB>name<TAB><TAB>battery=percent. The name there is the model
+    # ("Magic Mouse"), not the one the user gave it, so devices are matched
+    # by address, and by name only when IOKit gives no address.
     extra=$(ioreg -r -l -k BatteryPercent -w0 2>/dev/null | awk -F' = ' '
-        /\+-o / { if (p != "" && b != "") print p "\t\tbattery=" b; p = ""; b = "" }
+        function flush() { if (p != "" && b != "") print a "\t" p "\t\tbattery=" b; p = ""; b = ""; a = "" }
+        /\+-o / { flush() }
         /"Product" = / { p = $2; gsub(/"/, "", p) }
         /"BatteryPercent" = / { b = $2 + 0 }
-        END { if (p != "" && b != "") print p "\t\tbattery=" b }')
-    # The separator stays outside double quotes: inside them zsh keeps $'\n'
-    # as those four characters, which glued the device onto the line before.
+        /"DeviceAddress" = / { a = toupper($2); gsub(/"/, "", a); gsub(/-/, ":", a) }
+        END { flush() }')
     for line in "${(@f)extra}"; do
-        [[ -n $line && $'\n'$S_BT$'\n' != *$'\n'"${line%%$'\t'*}"$'\t'* ]] || continue
+        [[ -n $line ]] || continue
+        addr=${line%%$'\t'*} dev=${line#*$'\t'}
+        if [[ -n $addr ]]; then
+            [[ $known == *$'\n'"$addr"$'\n'* ]] && continue
+        else
+            [[ $'\n'$S_BT$'\n' == *$'\n'"${dev%%$'\t'*}"$'\t'* ]] && continue
+        fi
+        # The separator stays outside double quotes: inside them zsh keeps
+        # $'\n' as those four characters, which glued the device onto the
+        # line before.
         [[ -n $S_BT ]] && S_BT+=$'\n'
-        S_BT+=$line
+        S_BT+=$dev
     done
 }
 
-parse_bluetooth() {   # system_profiler SPBluetoothDataType on stdin
-    awk '
-        function flush() { if (name != "") printf "%s\t%s\t%s\n", name, kind, bats; name = "" }
+parse_bluetooth() {   # [addresses] -- system_profiler SPBluetoothDataType on stdin
+    # With "addresses", prints the connected devices' addresses instead.
+    awk -v want="${1:-devices}" '
+        function flush() {
+            if (name != "") {
+                if (want == "addresses") { if (addr != "") print toupper(addr) }
+                else printf "%s\t%s\t%s\n", name, kind, bats
+            }
+            name = ""
+        }
         {
             match($0, /^ */); ind = RLENGTH; line = substr($0, ind + 1)
             if (line == "Connected:") { section = ind; on = 1; dev = 0; next }
@@ -654,9 +674,10 @@ parse_bluetooth() {   # system_profiler SPBluetoothDataType on stdin
             if (!on || line == "") next
             if (!dev) dev = ind
             if (ind == dev && line ~ /:$/) {
-                flush(); name = substr(line, 1, length(line) - 1); kind = ""; bats = ""; next
+                flush(); name = substr(line, 1, length(line) - 1); kind = ""; bats = ""; addr = ""; next
             }
-            if (line ~ /^Minor Type: /) kind = substr(line, 13)
+            if (line ~ /^Address: /) addr = substr(line, 10)
+            else if (line ~ /^Minor Type: /) kind = substr(line, 13)
             else if (line ~ /Battery Level: [0-9]+%/) {
                 part = line; sub(/ ?Battery Level:.*/, "", part)
                 if (part == "") part = "battery"
@@ -761,12 +782,19 @@ collect_dynamic() {
     S_NET_RX="" S_NET_TX=""
     if [[ -n $S_NET_IF ]]; then
         line=$(netstat -ibn -I $S_NET_IF 2>/dev/null | awk '/<Link#/ { print $(NF-4), $(NF-1); exit }')
-        S_NET_RX_TOTAL=${line% *} S_NET_TX_TOTAL=${line#* }
-        if [[ -n $PREV_RX ]] && (( dt > 0 )); then
-            S_NET_RX=$(( (S_NET_RX_TOTAL - PREV_RX) / dt ))
-            S_NET_TX=$(( (S_NET_TX_TOTAL - PREV_TX) / dt ))
+        # A missed reading (an interface coming back up, say) would count as
+        # zero bytes: a negative rate, then everything since boot as one
+        # spike. So it shows no rate, and the next reading starts afresh.
+        if [[ $line == <->' '<-> ]]; then
+            S_NET_RX_TOTAL=${line% *} S_NET_TX_TOTAL=${line#* }
+            if [[ -n $PREV_RX ]] && (( dt > 0 && S_NET_RX_TOTAL >= PREV_RX && S_NET_TX_TOTAL >= PREV_TX )); then
+                S_NET_RX=$(( (S_NET_RX_TOTAL - PREV_RX) / dt ))
+                S_NET_TX=$(( (S_NET_TX_TOTAL - PREV_TX) / dt ))
+            fi
+            PREV_RX=$S_NET_RX_TOTAL PREV_TX=$S_NET_TX_TOTAL
+        else
+            PREV_RX="" PREV_TX=""
         fi
-        PREV_RX=$S_NET_RX_TOTAL PREV_TX=$S_NET_TX_TOTAL
     fi
 
     # Disk space on the data volume, and I/O across every disk
@@ -777,16 +805,21 @@ collect_dynamic() {
     S_DISK_USED=$(( S_DISK_TOTAL - S_DISK_FREE ))
     line=$(ioreg -c IOBlockStorageDriver -r -w0 -k Statistics -d 1 2>/dev/null | awk -F'[=,}]' '
         { for (i = 1; i < NF; i++) {
-              if ($i ~ /"Bytes \(Read\)"$/) r += $(i + 1)
+              if ($i ~ /"Bytes \(Read\)"$/) { r += $(i + 1); n++ }
               if ($i ~ /"Bytes \(Write\)"$/) w += $(i + 1) } }
-        END { printf "%.0f %.0f\n", r, w }')
-    S_DISK_READ_TOTAL=${line% *} S_DISK_WRITE_TOTAL=${line#* }
+        END { if (n) printf "%.0f %.0f\n", r, w }')
     S_DISK_READ="" S_DISK_WRITE=""
-    if [[ -n $PREV_DR ]] && (( dt > 0 )); then
-        S_DISK_READ=$(( (S_DISK_READ_TOTAL - PREV_DR) / dt ))
-        S_DISK_WRITE=$(( (S_DISK_WRITE_TOTAL - PREV_DW) / dt ))
+    # Missed readings are skipped the same way as the network's above
+    if [[ $line == <->' '<-> ]]; then
+        S_DISK_READ_TOTAL=${line% *} S_DISK_WRITE_TOTAL=${line#* }
+        if [[ -n $PREV_DR ]] && (( dt > 0 && S_DISK_READ_TOTAL >= PREV_DR && S_DISK_WRITE_TOTAL >= PREV_DW )); then
+            S_DISK_READ=$(( (S_DISK_READ_TOTAL - PREV_DR) / dt ))
+            S_DISK_WRITE=$(( (S_DISK_WRITE_TOTAL - PREV_DW) / dt ))
+        fi
+        PREV_DR=$S_DISK_READ_TOTAL PREV_DW=$S_DISK_WRITE_TOTAL
+    else
+        PREV_DR="" PREV_DW=""
     fi
-    PREV_DR=$S_DISK_READ_TOTAL PREV_DW=$S_DISK_WRITE_TOTAL
 
     # Busiest processes
     S_TOP_CPU=$(ps -Aceo pcpu=,rss=,comm= -r 2>/dev/null | head -n 12)
@@ -1619,7 +1652,10 @@ footer_keys() {   # -> REPLY: the key hints that fit what's on screen
     elif [[ -n $ZOOM ]]; then
         key z back; key 1…0 'other panels'; key q quit
     else
-        key q quit; key p pause; key 1…0 hide/show; key z zoom; key t theme; key f °C/°F
+        key q quit; key p pause; key 1…0 hide/show; key z zoom
+        # Themes only change the 256-color look, so 8 colors get no theme key
+        (( C256 )) && key t theme
+        key f °C/°F
         for name in ${(k)HIDDEN}; do
             (( HIDDEN[$name] )) && { key_of $name; hidden+=($REPLY); }
         done
@@ -1664,7 +1700,7 @@ live() {
     collector_loop >/dev/null 2>&1 &!
     COLLECTOR_PID=$!
 
-    exec {TTY_FD}</dev/tty
+    exec {TTY_FD}</dev/tty || die "Couldn't open the terminal to read keys from."
     STTY_SAVED=$(stty -g </dev/tty)
     stty -echo -icanon min 1 time 0 </dev/tty
     TERM_READY=1
@@ -1718,8 +1754,12 @@ live() {
             p|P|' ') (( paused = !paused )) ;;
             f|F) (( FAHRENHEIT = !FAHRENHEIT )) ;;
             t|T)
-                apply_theme $THEMES[$(( ${THEMES[(Ie)$THEME]} % $#THEMES + 1 ))]
-                toast "theme: $THEME"
+                if (( C256 )); then
+                    apply_theme $THEMES[$(( ${THEMES[(Ie)$THEME]} % $#THEMES + 1 ))]
+                    toast "theme: $THEME"
+                else
+                    toast "themes need a 256-color terminal"
+                fi
                 ;;
             z|Z)
                 if [[ -n $ZOOM ]]; then ZOOM=""; else (( ZOOM_PICK = !ZOOM_PICK )); fi
@@ -1777,6 +1817,10 @@ once() {
 # --- Main ------------------------------------------------------------------
 
 while (( $# )); do
+    # --interval=5 and the like become --interval 5, so each option has one case
+    case $1 in
+        (--interval|--theme|--sky)=*) set -- "${1%%=*}" "${1#*=}" "${@[2,-1]}" ;;
+    esac
     case $1 in
         -h|--help)
             usage
@@ -1786,10 +1830,6 @@ while (( $# )); do
             [[ ${2:-} == <1-60> ]] || die "--interval needs whole seconds from 1 to 60, e.g. --interval 5"
             INTERVAL=$2
             shift
-            ;;
-        --interval=*)
-            [[ ${1#*=} == <1-60> ]] || die "--interval needs whole seconds from 1 to 60, e.g. --interval=5"
-            INTERVAL=${1#*=}
             ;;
         -F|--fahrenheit)
             FAHRENHEIT=1
@@ -1820,8 +1860,10 @@ apply_theme $THEME
 
 [[ $OSTYPE == darwin* ]] || die "$SCRIPT_NAME reads macOS tools (top, vm_stat, ioreg, pmset), so it only runs on macOS."
 
-# No terminal to animate in (piped, redirected): print one snapshot instead.
-[ -t 1 ] && [ -r /dev/tty ] || ONCE=1
+# No terminal to animate in (piped, redirected, or no controlling terminal
+# to read keys from): print one snapshot instead. /dev/tty is readable by
+# everyone, so only actually opening it tells whether there is one.
+[ -t 1 ] && { : </dev/tty } 2>/dev/null || ONCE=1
 
 if (( ONCE )); then
     once
