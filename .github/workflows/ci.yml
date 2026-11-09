@@ -6,7 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# CI reads repository contents; the coverage job can upload coverage data to Code Quality.
+# Read-only by default; only the coverage job may also comment on PRs and
+# upload coverage to Code Quality.
 permissions:
   contents: read
 
@@ -70,17 +71,25 @@ jobs:
           /bin/bash --version | head -1
           TEST_SHELL=/bin/bash make test
 
-  # Upload Cobertura coverage to GitHub Code Quality for PR coverage reporting.
+  # Line coverage for the bash and zsh scripts (tests/coverage/). On a pull
+  # request it also measures the base commit and posts the comparison as a
+  # comment, which later pushes to the PR update in place. Everything stays
+  # on GitHub: no coverage service, nothing stored in the repository.
+  #
+  # It also uploads the report to GitHub Code Quality's code coverage. That
+  # isn't available for this repository yet (the API answers 404), so the
+  # upload only warns; it starts working on its own once GitHub offers it.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
+      pull-requests: write
       code-quality: write
     steps:
-      # The PR's head commit rather than the merge commit, so the reported
-      # lines match the diff.
+      # The PR's head commit rather than the merge commit, so the numbers are
+      # for exactly what was pushed.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -95,14 +104,56 @@ jobs:
           make coverage
           cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      # Fork PRs cannot upload coverage to the base repository.
-      - name: Upload coverage report
+      # The base commit with its own scripts and tests, so the comparison is
+      # like for like. A failing test there still leaves its report behind.
+      - name: Coverage of the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch -q --depth=1 origin "$BASE_SHA"
+          git worktree add -q --detach "$RUNNER_TEMP/base" FETCH_HEAD
+          if grep -q '^coverage:' "$RUNNER_TEMP/base/Makefile"; then
+            make -C "$RUNNER_TEMP/base" coverage > /dev/null 2>&1 || true
+          fi
+
+      # Fork PRs get a read-only token, so they skip the upload.
+      - name: Upload coverage to GitHub Code Quality
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-code-coverage@v1
         with:
           file: coverage/cobertura.xml
           language: Shell
           label: code-coverage/shell-scripts
+          fail-on-error: false
+
+      # One comment per PR, found again by the marker on its first line and
+      # edited on every push. Fork PRs get a read-only token, so they only
+      # have the step summary.
+      - name: Comment on the PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_NAME: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          base="$RUNNER_TEMP/base/coverage/lcov.info"
+          [ -s "$base" ] || base=/dev/null
+          awk -v base_name="$BASE_NAME" -v base_sha="$BASE_SHA" \
+              -v head_sha="$HEAD_SHA" -v run_url="$RUN_URL" \
+              -f tests/coverage/compare.awk "$base" coverage/lcov.info > coverage/comment.md
+
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- coverage-report -->"))) | .id')
+          id=${ids%%[[:space:]]*}
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@coverage/comment.md > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@coverage/comment.md > /dev/null
+          fi
 
       - name: Keep the report
         if: always()
@@ -113,6 +164,7 @@ jobs:
             coverage/cobertura.xml
             coverage/lcov.info
             coverage/summary.md
+            coverage/comment.md
             coverage/annotated/
           if-no-files-found: ignore
 
