@@ -201,7 +201,7 @@ make check       # lint + test
 make coverage    # tests + line coverage report in coverage/ (COVERAGE_MIN=N to enforce)
 ```
 
-`make coverage` traces bash scripts through `BASH_ENV` and zsh scripts through a DEBUG trap (see `tests/coverage/`), since kcov and friends don't do zsh. It prints a per-script table and writes `coverage/lcov.info` for editor gutters, plus `coverage/annotated/<script>` with every line marked `>` (ran) or `!` (never ran). On each pull request, CI also measures the base branch and comments with the coverage of both, per script, updating that one comment on every push. It also writes `coverage/cobertura.xml` and uploads it to GitHub Code Quality, which ignores it until GitHub offers code coverage for this repository.
+`make coverage` traces bash scripts through `BASH_ENV` and zsh scripts through a DEBUG trap (see `tests/coverage/`), since kcov and friends don't do zsh. It prints a per-script table and writes `coverage/lcov.info` for editor gutters, plus `coverage/annotated/<script>` with every line marked `>` (ran) or `!` (never ran). On each pull request, CI also measures the base branch and comments with the coverage of both, per script, updating that one comment on every push.
 
 </details>
 

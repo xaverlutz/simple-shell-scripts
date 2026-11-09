@@ -6,8 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Read-only by default; only the coverage job may also comment on PRs and
-# upload coverage to Code Quality.
+# Read-only by default; only the coverage job may also comment on PRs.
 permissions:
   contents: read
 
@@ -75,10 +74,6 @@ jobs:
   # request it also measures the base commit and posts the comparison as a
   # comment, which later pushes to the PR update in place. Everything stays
   # on GitHub: no coverage service, nothing stored in the repository.
-  #
-  # It also uploads the report to GitHub Code Quality's code coverage. That
-  # isn't available for this repository yet (the API answers 404), so the
-  # upload only warns; it starts working on its own once GitHub offers it.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
@@ -86,7 +81,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      code-quality: write
     steps:
       # The PR's head commit rather than the merge commit, so the numbers are
       # for exactly what was pushed.
@@ -116,16 +110,6 @@ jobs:
           if grep -q '^coverage:' "$RUNNER_TEMP/base/Makefile"; then
             make -C "$RUNNER_TEMP/base" coverage > /dev/null 2>&1 || true
           fi
-
-      # Fork PRs get a read-only token, so they skip the upload.
-      - name: Upload coverage to GitHub Code Quality
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-code-coverage@v1
-        with:
-          file: coverage/cobertura.xml
-          language: Shell
-          label: code-coverage/shell-scripts
-          fail-on-error: false
 
       # One comment per PR, found again by the marker on its first line and
       # edited on every push. Fork PRs get a read-only token, so they only
@@ -161,7 +145,6 @@ jobs:
         with:
           name: coverage
           path: |
-            coverage/cobertura.xml
             coverage/lcov.info
             coverage/summary.md
             coverage/comment.md
