@@ -6,6 +6,7 @@
 Install once per Mac, update with one command. They carry their shell everywhere.
 
 [![CI](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxaverlutz%2Fsimple-shell-scripts%2Fbadges%2Fcoverage.json)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml?query=branch%3Amain)
 [![Latest release](https://img.shields.io/github/v/tag/xaverlutz/simple-shell-scripts?label=release&sort=semver&color=2ea44f)](https://github.com/xaverlutz/simple-shell-scripts/tags)
 ![macOS](https://img.shields.io/badge/macOS-zsh%20%26%20bash-555?logo=apple)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)

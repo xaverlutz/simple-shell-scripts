@@ -243,6 +243,17 @@ function report(    i, fmt, sum, total) {
   close(sum)
 
   total = tstmts ? 100 * tcov / tstmts : 100
+
+  # A shields.io endpoint badge, published by CI for the README.
+  color = "red"
+  if (total >= 20) color = "orange"
+  if (total >= 40) color = "yellow"
+  if (total >= 60) color = "yellowgreen"
+  if (total >= 80) color = "brightgreen"
+  badge = out "/badge.json"
+  printf "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"%s\",\"color\":\"%s\"}\n", \
+    pct(tcov, tstmts), color > badge
+  close(badge)
   if (total < min + 0) {
     printf "\nCoverage %.1f%% is below the required %s%%\n", total, min
     exit 1
