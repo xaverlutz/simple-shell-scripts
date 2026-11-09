@@ -35,6 +35,12 @@ for arg in "$@"; do
       show_help
       exit 0
       ;;
+    *)
+      # Never fall through to deleting on a typo like --dry-run.
+      error "Unknown argument: $arg"
+      show_help >&2
+      exit 1
+      ;;
   esac
 done
 
