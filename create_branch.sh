@@ -23,6 +23,16 @@ run_git() {
   return "${PIPESTATUS[0]}"
 }
 
+# Run a git step through run_git, and stop if it fails, so a failed checkout
+# or pull never ends in a branch off the wrong base and a success message.
+git_step() {
+  local what="$1"; shift
+  if ! run_git "$@"; then
+    error "${what} failed — no branch was created."
+    exit 1
+  fi
+}
+
 # Usage/help text
 show_help() {
   cat <<EOF
@@ -78,43 +88,61 @@ fi
 branch_name="${args[0]}"
 commit_message="${args[1]}"
 
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  error "Not inside a git repository."
+  exit 1
+fi
+
 # Determine base branch
 if [ "$use_current_branch" = "true" ]; then
-  base_branch="$(git branch --show-current)"
+  # `git branch --show-current` needs git 2.22+; symbolic-ref works everywhere.
+  base_branch="$(git symbolic-ref --quiet --short HEAD)"
+  if [ -z "$base_branch" ]; then
+    error "Not on a branch (detached HEAD), so --on-base-branch has no base to use."
+    exit 1
+  fi
   log "Using current branch '${BOLD}${base_branch}${RESET}' as base 🌿"
 else
   base_branch="${args[1]:-main}"
   commit_message="${args[2]}"
 fi
 
-# Check if the feature branch exists
-if git branch -l | grep -q "$branch_name"; then
+# Check if the feature branch exists. An exact ref lookup: grepping
+# `git branch` matched any branch containing the name.
+if git show-ref --verify --quiet "refs/heads/${branch_name}"; then
   error "The branch '${branch_name}' already exists!"
   exit 1
 fi
 
 # Fetch origin
 log "Fetching origin changes ..."
-run_git fetch --prune origin
+git_step "Fetching origin" fetch --prune origin
 
 # Ensure that we are on the base branch ...
 log "Switching to '${BOLD}${base_branch}${RESET}' ..."
-run_git checkout "$base_branch"
+git_step "Switching to '${base_branch}'" checkout "$base_branch"
 
-# ... pull any changes ...
-log "Pulling latest changes ..."
-run_git pull origin "$base_branch"
-
-log "'${BOLD}${base_branch}${RESET}' is up to date 🔁"
+# ... pull any changes, if the base branch exists on origin at all ...
+if git show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
+  log "Pulling latest changes ..."
+  git_step "Pulling '${base_branch}'" pull origin "$base_branch"
+  log "'${BOLD}${base_branch}${RESET}' is up to date 🔁"
+else
+  warning "'${base_branch}' is not on origin — using the local branch as it is."
+fi
 
 # ... and create new branch
 log "Creating branch '${BOLD}${branch_name}${RESET}' ..."
-run_git checkout -b "$branch_name"
+git_step "Creating '${branch_name}'" checkout -b "$branch_name"
 
-# Optional commit message
+# Optional commit message. --allow-empty, since a freshly created branch
+# usually has nothing staged and the commit would otherwise fail.
 if [ -n "$commit_message" ]; then
   log "Creating initial commit ..."
-  run_git commit -m "$commit_message"
+  if ! run_git commit --allow-empty -m "$commit_message"; then
+    error "Branch '${branch_name}' was created, but the initial commit failed."
+    exit 1
+  fi
 fi
 
 success "Branch '${branch_name}' created successfully!"
