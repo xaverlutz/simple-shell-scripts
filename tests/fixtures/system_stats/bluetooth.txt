@@ -1,0 +1,46 @@
+Bluetooth:
+
+      Bluetooth Controller:
+          Address: 00:00:00:00:00:01
+          State: On
+          Chipset: BCM_4388C2
+          Discoverable: Off
+          Firmware Version: 24.2.241.1935
+          Product ID: 0x4A43
+          Supported services: 0x1390039 < HFP AVRCP A2DP HID LEA AACP GATT SerialPort SCO >
+          Transport: PCIe
+          Vendor ID: 0x004C (Apple)
+      Connected:
+          Test AirPods Pro:
+              Address: 00:00:00:00:00:02
+              Vendor ID: 0x004C
+              Product ID: 0x2014
+              Case Battery Level: 85%
+              Left Battery Level: 100%
+              Right Battery Level: 98%
+              Case Version: 1.4.1
+              Firmware Version: 6F21
+              Minor Type: Headphones
+              Serial Number: TESTSERIAL00
+          Magic Keyboard:
+              Address: 00:00:00:00:00:03
+              Vendor ID: 0x004C
+              Product ID: 0x029C
+              Battery Level: 64%
+              Firmware Version: 2.0.6
+              Minor Type: Keyboard
+          Living Room Speaker:
+              Address: 00:00:00:00:00:04
+              Minor Type: Speaker
+              RSSI: -54
+      Not Connected:
+          MX Master 3S:
+              Address: 00:00:00:00:00:05
+              Battery Level: 12%
+              Minor Type: Mouse
+          Old AirPods:
+              Address: 00:00:00:00:00:06
+              Case Battery Level: 40%
+              Left Battery Level: 30%
+              Right Battery Level: 20%
+              Minor Type: Headphones

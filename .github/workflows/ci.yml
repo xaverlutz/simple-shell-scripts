@@ -49,11 +49,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # zsh too, or tests/system_stats.bats skips itself on Linux.
       - name: Install bats (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats zsh
+          zsh --version
 
       - name: Install bats (macOS)
         if: runner.os == 'macOS'
