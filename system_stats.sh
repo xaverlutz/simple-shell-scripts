@@ -663,6 +663,20 @@ parse_bluetooth() {   # system_profiler SPBluetoothDataType on stdin
         END { flush() }'
 }
 
+parse_pmset_batt() {   # pmset -g batt output -> power source and battery state
+    # Now drawing from 'Battery Power'
+    #  -InternalBattery-0 (id=1234567)<TAB>80%; discharging; 5:12 remaining present: true
+    local out=$1 line
+    S_POWER_SOURCE=${${out#*\'}%%\'*}
+    S_BATT_PCT="" S_BATT_STATE="" S_BATT_TIME=""
+    [[ $out == *InternalBattery* ]] || return 0
+    line=${${(f)out}[2]}
+    local -a f=("${(@s:; :)${line#*$'\t'}}")
+    S_BATT_PCT=${f[1]%\%}
+    S_BATT_STATE=$f[2]
+    S_BATT_TIME=${f[3]%% present*}
+}
+
 COLLECT_TICK=0
 collect_dynamic() {
     local now=$EPOCHREALTIME line out k v
@@ -701,16 +715,7 @@ collect_dynamic() {
     [[ $out =~ '"In use system memory"=([0-9]+)' ]] && S_GPU_MEM=$match[1]
 
     # Battery and power
-    out=$(pmset -g batt 2>/dev/null)
-    S_POWER_SOURCE=${${out#*\'}%%\'*}
-    S_BATT_PCT="" S_BATT_STATE="" S_BATT_TIME=""
-    if [[ $out == *InternalBattery* ]]; then
-        line=${${(f)out}[2]}
-        local -a f=("${(@s:; :)${line#*$'\t'}}")
-        S_BATT_PCT=${f[1]%\%}
-        S_BATT_STATE=$f[2]
-        S_BATT_TIME=${f[3]%% present*}
-    fi
+    parse_pmset_batt "$(pmset -g batt 2>/dev/null)"
     out=$(ioreg -rn AppleSmartBattery -w0 2>/dev/null)
     S_BATT_CYCLES="" S_BATT_HEALTH="" S_BATT_VOLTS="" S_BATT_WATTS="" S_SYS_WATTS="" S_ADAPTER_WATTS=""
     if [[ -n $out ]]; then
