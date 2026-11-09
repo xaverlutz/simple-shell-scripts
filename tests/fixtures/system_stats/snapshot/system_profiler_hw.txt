@@ -1,0 +1,17 @@
+Hardware:
+
+    Hardware Overview:
+
+      Model Name: MacBook Pro
+      Model Identifier: Mac16,1
+      Chip: Apple M4
+      Total Number of Cores: 10 (4 performance and 6 efficiency)
+      Memory: 16 GB
+
+Graphics/Displays:
+
+    Apple M4:
+
+      Chipset Model: Apple M4
+      Type: GPU
+      Total Number of Cores: 10

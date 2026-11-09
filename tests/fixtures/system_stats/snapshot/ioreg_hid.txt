@@ -1,0 +1,5 @@
++-o AppleDeviceManagementHIDEventService  <class AppleDeviceManagementHIDEventService, id 0x100000600, registered, matched, active, busy 0 (0 ms), retain 6>
+    {
+      "Product" = "Magic Trackpad"
+      "BatteryPercent" = 64
+    }

@@ -1,0 +1,5 @@
+ 44.6 183824 WindowServer
+ 21.3 912384 Xcode
+ 12.0 402112 Safari
+  6.4  98304 kernel_task
+  3.1  65536 Terminal

@@ -1,0 +1,11 @@
++-o AppleSmartBattery  <class AppleSmartBattery, id 0x100000415, registered, matched, active, busy 0 (0 ms), retain 7>
+    {
+      "DesignCapacity" = 4563
+      "NominalChargeCapacity" = 4380
+      "CycleCount" = 87
+      "Voltage" = 12450
+      "InstantAmperage" = 18446744073709550616
+      "ExternalConnected" = No
+      "PowerTelemetryData" = {"SystemLoad"=9850,"AdapterEfficiencyLoss"=0}
+      "AdapterDetails" = {"Watts"=0}
+    }

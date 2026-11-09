@@ -1,15 +1,19 @@
 #!/usr/bin/env bats
 #
-# Tests for the parsers and formatting helpers in system_stats.sh
+# Tests for system_stats.sh: its parsers, formatting helpers, the --once
+# snapshot and its options.
 #
 #   bats tests/
 #
-# The dashboard itself never runs: each test sources the script with
+# The live dashboard never runs: each test sources the script with
 # everything from the "# --- Main ---" marker on stripped, which leaves only
 # function definitions and settings, then feeds the functions saved samples of
 # what top, pmset, system_profiler and the sensor helper print (in
-# tests/fixtures/system_stats/). No terminal or macOS tool is needed, but zsh
-# is, so the whole file is skipped where it isn't installed.
+# tests/fixtures/system_stats/). For a whole snapshot, fake_macos_tools puts
+# stand-ins for every macOS tool it reads on PATH (fixtures/system_stats/
+# snapshot/). The option tests run the script itself, but only with options
+# that make it exit before it reads anything. No terminal or macOS tool is
+# needed, but zsh is, so the whole file is skipped where it isn't installed.
 
 setup() {
   command -v zsh >/dev/null 2>&1 || skip "zsh not installed"
@@ -39,6 +43,26 @@ zsh_run() {
   run zsh -f -c 'if [[ -n ${COV_ZSH-} ]]; then source "$COV_ZSH"; fi
 source "$LIB" || exit 99
 '"$1"
+}
+
+# Put stand-ins for the macOS tools system_stats reads first on PATH. Each is
+# a link to fixtures/system_stats/snapshot/fake_tool.sh, which prints a saved
+# sample for the tool it's called as.
+fake_macos_tools() {
+  local t
+  mkdir -p "$TMP/bin"
+  for t in sysctl vm_stat ioreg system_profiler pmset top scutil hostname \
+           sw_vers uname xcode-select route networksetup ipconfig who netstat df ps; do
+    ln -sf "$FIX/snapshot/fake_tool.sh" "$TMP/bin/$t"
+  done
+  export SNAPSHOT_DIR="$FIX/snapshot" PATH="$TMP/bin:$PATH"
+}
+
+# Draw one --once snapshot, with the sky pinned to day so it doesn't depend
+# on the date.
+snapshot() {
+  fake_macos_tools
+  zsh_run "apply_theme turtle; SKY_MODE=day; COLUMNS=${1:-120}; once"
 }
 
 # --- parse_top_line --------------------------------------------------------
@@ -318,4 +342,176 @@ fake_probe() {
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "[abcd…]" ]
   [ "${lines[1]}" = "[plain   ]" ]
+}
+
+@test "human_rate: an ellipsis until there's a second sample, then bytes per second" {
+  zsh_run 'human_rate ""; print -r -- $REPLY; human_rate 2048; print -r -- $REPLY'
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "…" ]
+  [ "${lines[1]}" = "2.0K/s" ]
+}
+
+@test "pct: rounds to a whole percent" {
+  zsh_run 'pct 12.6; print -r -- $REPLY; pct; print -r -- $REPLY'
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "13%" ]
+  [ "${lines[1]}" = "0%" ]
+}
+
+@test "bar: fills by eighths and clamps to 0-100%" {
+  zsh_run '
+    apply_theme turtle
+    bar 50 10; print -r -- "[$REPLY]"
+    bar 55 10; print -r -- "[$REPLY]"
+    bar 150 4; print -r -- "[$REPLY]"
+    bar -5 4; print -r -- "[$REPLY]"
+  '
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "[█████░░░░░]" ]
+  [ "${lines[1]}" = "[█████▌░░░░]" ]
+  [ "${lines[2]}" = "[████]" ]
+  [ "${lines[3]}" = "[░░░░]" ]
+}
+
+@test "spark: scales to the largest value and right-aligns short histories" {
+  zsh_run '
+    apply_theme turtle
+    spark 5 0 PAL_HEAT 0 1 2 4 8; print -r -- "[$REPLY]"
+    spark 3 0 PAL_HEAT 7; print -r -- "[$REPLY]"
+    spark 2 0 PAL_HEAT 1 2 3 4; print -r -- "[$REPLY]"
+  '
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "[▁▂▃▅█]" ]
+  [ "${lines[1]}" = "[  █]" ]
+  # Only the newest values that fit are drawn.
+  [ "${lines[2]}" = "[▆█]" ]
+}
+
+@test "spark2: a value above half height spills into the top row" {
+  zsh_run '
+    apply_theme turtle
+    spark2 3 0 PAL_HEAT 1 8; print -rl -- "[$reply[1]]" "[$reply[2]]"
+  '
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "[  █]" ]
+  [ "${lines[1]}" = "[ ▂█]" ]
+}
+
+@test "sky_state: --sky overrides what the date and time would pick" {
+  zsh_run '
+    for SKY_MODE in day night snow fireworks; do
+      sky_state
+      print -r -- "$SKY_MODE night=$SKY_NIGHT fireworks=$SKY_FIREWORKS"
+    done
+  '
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "day night=0 fireworks=0" ]
+  [ "${lines[1]}" = "night night=1 fireworks=0" ]
+  [ "${lines[3]}" = "fireworks night=1 fireworks=1" ]
+}
+
+# --- --once snapshot -------------------------------------------------------
+
+@test "once: draws every panel from the macOS tools' output" {
+  snapshot
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == *"Test Mac · MacBook Pro · macOS 15.1"* ]]
+  local panel
+  for panel in CPU MEMORY THERMALS POWER GPU NETWORK DISK SYSTEM BLUETOOTH PROCESSES; do
+    [[ "$output" == *"$panel"* ]] || { echo "missing panel: $panel"; return 1; }
+  done
+  [[ "$output" == *"Apple M4 · 4 performance + 6 efficiency"* ]]
+  [[ "$output" == *"load     2.55  2.65  3.20"* ]]
+  [[ "$output" == *"8.9G / 16G"* ]]
+  [[ "$output" == *"swap 512M of 2.0G"* ]]
+  [[ "$output" == *"discharging · 5:12 remaining"* ]]
+  [[ "$output" == *"health 95% · cycles 87 · 12.45V"* ]]
+  [[ "$output" == *"Apple M4 · 10 cores"* ]]
+  [[ "$output" == *"memory in use 768M"* ]]
+  [[ "$output" == *"en0 · Wi-Fi · 192.0.2.23"* ]]
+  [[ "$output" == *"393G / 926G"* ]]
+  [[ "$output" == *"macOS 15.1 (24B83) · Darwin 24.1.0"* ]]
+  [[ "$output" == *"1083 processes · 3 running · 5026 threads"* ]]
+  [[ "$output" == *"Mac16,1 · 16G memory · 2 logged in"* ]]
+  [[ "$output" == *"44.6    180M  WindowServer"* ]]
+}
+
+@test "once: points to the Command Line Tools when there's no sensor helper" {
+  snapshot
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"xcode-select --install"* ]]
+}
+
+@test "once: shows a battery device that only ioreg reports" {
+  # The Magic Trackpad comes from ioreg, not system_profiler. Appending it
+  # used to add a literal $'\n' instead of a newline, which merged it into
+  # the device before and crashed bt_lines with a bad math expression.
+  snapshot
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"bad math expression"* ]]
+  [[ "$output" == *"Living Room Speaker · speaker"* ]]
+  [[ "$output" == *"│ Magic Trackpad "* ]]
+}
+
+# The widths of a snapshot's lines, one per distinct width. Counted in the
+# script's own session, which sets a UTF-8 locale so ${#l} counts characters.
+snapshot_widths() {
+  fake_macos_tools
+  zsh_run "apply_theme turtle; SKY_MODE=day; COLUMNS=$1"'
+    for l in "${(@f)$(once)}"; do print ${#l}; done | sort -u'
+}
+
+@test "once: every line has the same width, never wider than the terminal" {
+  # Wide terminals get two columns of panels at an odd width.
+  snapshot_widths 120
+  [ "$status" -eq 0 ]
+  [ "$output" = "119" ]
+
+  snapshot_widths 84
+  [ "$status" -eq 0 ]
+  [ "$output" = "84" ]
+}
+
+@test "once: a terminal narrower than 64 columns still gets 64" {
+  snapshot_widths 40
+  [ "$status" -eq 0 ]
+  [ "$output" = "64" ]
+}
+
+# --- Options ---------------------------------------------------------------
+# These run the script itself. Every case exits while parsing its options,
+# before it checks for macOS or reads any tool.
+
+@test "--help prints usage and exits 0" {
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"USAGE"* ]]
+  [[ "$output" == *"system_stats.sh --once"* ]]
+}
+
+@test "rejects an --interval outside 1-60 seconds" {
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --interval 0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--interval needs whole seconds from 1 to 60"* ]]
+
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --interval=abc
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--interval needs whole seconds"* ]]
+}
+
+@test "rejects an unknown --theme or --sky" {
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --theme plaid
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--theme needs one of: turtle, ocean, sunset, mono"* ]]
+
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --sky rain
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--sky needs one of"* ]]
+}
+
+@test "rejects unknown options with the usage" {
+  run zsh "$BATS_TEST_DIRNAME/../system_stats.sh" --bogus
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown option: --bogus"* ]]
+  [[ "$output" == *"USAGE"* ]]
 }

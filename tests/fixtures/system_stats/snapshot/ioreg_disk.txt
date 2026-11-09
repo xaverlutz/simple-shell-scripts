@@ -1,0 +1,4 @@
++-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x100000500, registered, matched, active, busy 0 (0 ms), retain 6>
+    {
+      "Statistics" = {"Operations (Write)"=8812345,"Bytes (Read)"=412316860416,"Errors (Write)"=0,"Bytes (Write)"=203004067840,"Operations (Read)"=12345678}
+    }

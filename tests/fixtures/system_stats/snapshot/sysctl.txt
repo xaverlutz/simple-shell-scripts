@@ -1,0 +1,11 @@
+hw.model: Mac16,1
+machdep.cpu.brand_string: Apple M4
+hw.logicalcpu: 10
+hw.memsize: 17179869184
+kern.boottime: { sec = 1793133862, usec = 487060 } Tue Oct 27 21:44:22 2026
+hw.perflevel0.logicalcpu: 4
+hw.perflevel1.logicalcpu: 6
+hw.perflevel0.name: Performance
+hw.perflevel1.name: Efficiency
+kern.memorystatus_level: 72
+vm.swapusage: total = 2048.00M  used = 512.00M  free = 1536.00M  (encrypted)
