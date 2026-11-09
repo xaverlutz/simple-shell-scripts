@@ -1,0 +1,17 @@
+# Codecov settings for the coverage that CI uploads (see the coverage job in
+# .github/workflows/ci.yml and tests/coverage/).
+#
+# Coverage is reported, not enforced: the project and patch checks show up on
+# each PR but never fail it. Raise that once the numbers have climbed.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, flags, files"
+  require_changes: false

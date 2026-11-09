@@ -6,7 +6,7 @@
 Install once per Mac, update with one command. They carry their shell everywhere.
 
 [![CI](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxaverlutz%2Fsimple-shell-scripts%2Fbadges%2Fcoverage.json)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/xaverlutz/simple-shell-scripts/graph/badge.svg)](https://codecov.io/gh/xaverlutz/simple-shell-scripts)
 [![Latest release](https://img.shields.io/github/v/tag/xaverlutz/simple-shell-scripts?label=release&sort=semver&color=2ea44f)](https://github.com/xaverlutz/simple-shell-scripts/tags)
 ![macOS](https://img.shields.io/badge/macOS-zsh%20%26%20bash-555?logo=apple)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
@@ -202,7 +202,7 @@ make check       # lint + test
 make coverage    # tests + line coverage report in coverage/ (COVERAGE_MIN=N to enforce)
 ```
 
-`make coverage` traces bash scripts through `BASH_ENV` and zsh scripts through a DEBUG trap (see `tests/coverage/`), since kcov and friends don't do zsh. It prints a per-script table and writes `coverage/lcov.info` for editor gutters, plus `coverage/annotated/<script>` with every line marked `>` (ran) or `!` (never ran).
+`make coverage` traces bash scripts through `BASH_ENV` and zsh scripts through a DEBUG trap (see `tests/coverage/`), since kcov and friends don't do zsh. It prints a per-script table and writes `coverage/cobertura.xml`, which CI uploads to [Codecov](https://codecov.io/gh/xaverlutz/simple-shell-scripts) for the badge above and a comment on each pull request comparing its coverage with `main`. There's also `coverage/lcov.info` for editor gutters, and `coverage/annotated/<script>` with every line marked `>` (ran) or `!` (never ran).
 
 </details>
 
