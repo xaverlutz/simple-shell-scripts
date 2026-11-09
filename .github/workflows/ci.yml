@@ -169,6 +169,11 @@ jobs:
           delete_local_branch --help
           reset_build --help
           send_location --help
+          system_stats --help
+
+      - name: system_stats prints a snapshot
+        run: |
+          "$RUNNER_TEMP/prefix/bin/system_stats" --once
 
       - name: make uninstall leaves nothing behind
         run: |
