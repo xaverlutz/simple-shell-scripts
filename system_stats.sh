@@ -3,17 +3,20 @@
 # ---------------------------------------------------------------------------
 # system_stats.sh — a live, animated dashboard of your Mac's vital signs
 #
-# Usage: ./system_stats.sh [--interval SECONDS] [--fahrenheit] [--once]
+# Usage: ./system_stats.sh [--interval N] [--fahrenheit] [--theme NAME] [--sky MODE]
+#        ./system_stats.sh --once
 #
 # Shows CPU (per core), GPU, memory, temperatures and fans, power and battery,
-# network, disk, system facts and the busiest processes: everything macOS hands
-# out without sudo. A turtle strolls along the top, faster the busier the CPU
-# is, under the sun by day and the stars by night, and naps when the Mac idles.
+# Bluetooth device batteries, network, disk, system facts and the busiest
+# processes: everything macOS hands out without sudo. A turtle strolls along
+# the top, faster the busier the CPU is, under the sun by day and the stars by
+# night (with snow in winter and fireworks at New Year), and naps when idle.
 #
 # Temperatures, fans and per-core load come from a tiny helper compiled once
 # with the Xcode Command Line Tools and cached in ~/Library/Caches.
 #
-# Keys: q quits, p pauses, f switches °C/°F. NO_COLOR=1 disables colors.
+# Keys: q quits, p pauses, 1-0 hide panels, z zooms one, t switches the
+# theme, f switches °C/°F. NO_COLOR=1 disables colors.
 # ---------------------------------------------------------------------------
 
 setopt extended_glob
@@ -31,6 +34,10 @@ export LC_CTYPE=en_US.UTF-8 LC_NUMERIC=C
 INTERVAL=2
 ONCE=0
 FAHRENHEIT=0
+SKY_MODE=auto
+THEMES=(turtle ocean sunset mono)
+THEME=${SYSTEM_STATS_THEME:-turtle}
+(( ${THEMES[(Ie)$THEME]} )) || THEME=turtle
 
 # --- Colors ----------------------------------------------------------------
 # With a 256-color terminal, bars and sparklines get smooth gradients; with 8
@@ -39,16 +46,21 @@ FAHRENHEIT=0
 C_RESET=""; C_BOLD=""; C_REV=""; C_NOREV=""
 C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_MAGENTA=""; C_CYAN=""; C_GRAY=""
 C_FRAME=""; C_TRACK=""; C_GROUND=""
+C256=0
 typeset -ga PAL_HEAT PAL_COOL PAL_WARM PAL_VIOLET
-typeset -gA ACCENT INK
+typeset -gA ACCENT INK GRADIENT
+# Turtle and sky inks: o shell rim, s shell plates, h head, l legs, e speed
+# lines, z sleepy z's, c clouds, u sun, m moon, k stars, w sweat, b battery
+# case, B battery cells, f snow, fw1-fw6 fireworks
+INK_KEYS=(o s h l e z c u m k w b B f fw1 fw2 fw3 fw4 fw5 fw6)
 
 setup_colors() {
-    local c
-    local -a heat cool warm violet
+    local k
     PAL_HEAT=('' '' '' '' '' '' '' '' '' '')
     PAL_COOL=("${PAL_HEAT[@]}") PAL_WARM=("${PAL_HEAT[@]}") PAL_VIOLET=("${PAL_HEAT[@]}")
-    ACCENT=(cpu '' mem '' temp '' power '' gpu '' net '' disk '' sys '' proc '')
-    INK=(o '' s '' h '' l '' e '' z '' c '' u '' m '' k '')
+    ACCENT=(cpu '' mem '' temp '' power '' gpu '' net '' disk '' sys '' bt '' proc '')
+    INK=()
+    for k in $INK_KEYS; do INK[$k]=''; done
     [ -t 1 ] && [ -z "${NO_COLOR:-}" ] || return 0
 
     C_RESET=$'\e[0m' C_BOLD=$'\e[1m' C_REV=$'\e[7m' C_NOREV=$'\e[27m'
@@ -56,49 +68,53 @@ setup_colors() {
     C_MAGENTA=$'\e[35m' C_CYAN=$'\e[36m' C_GRAY=$'\e[90m'
 
     if [[ $TERM == *256color* || $TERM == *(kitty|ghostty|alacritty|wezterm)* || -n ${COLORTERM:-} ]]; then
-        fg() { REPLY=$'\e[38;5;'$1'm'; }
-        heat=(41 77 113 149 185 221 215 209 203 197)
-        cool=(24 25 31 32 38 39 45 51 87 123)
-        warm=(94 130 136 172 178 214 220 221 227 229)
-        violet=(54 55 91 92 128 129 135 165 171 177)
-        PAL_HEAT=() PAL_COOL=() PAL_WARM=() PAL_VIOLET=()
-        for c in $heat; do fg $c; PAL_HEAT+=("$REPLY"); done
-        for c in $cool; do fg $c; PAL_COOL+=("$REPLY"); done
-        for c in $warm; do fg $c; PAL_WARM+=("$REPLY"); done
-        for c in $violet; do fg $c; PAL_VIOLET+=("$REPLY"); done
-        fg 240; C_FRAME=$REPLY
-        fg 237; C_TRACK=$REPLY
-        fg 245; C_GRAY=$REPLY
-        fg 71;  C_GROUND=$REPLY
-        fg 75;  ACCENT[cpu]=$REPLY
-        fg 141; ACCENT[mem]=$REPLY
-        fg 209; ACCENT[temp]=$REPLY
-        fg 220; ACCENT[power]=$REPLY
-        fg 39;  ACCENT[gpu]=$REPLY
-        fg 43;  ACCENT[net]=$REPLY
-        fg 176; ACCENT[disk]=$REPLY
-        fg 250; ACCENT[sys]=$REPLY
-        fg 114; ACCENT[proc]=$REPLY
-        fg 34;  INK[o]=$REPLY     # shell rim
-        fg 28;  INK[s]=$REPLY     # shell plates
-        fg 150; INK[h]=$REPLY     # head
-        fg 107; INK[l]=$REPLY     # legs
-        fg 244; INK[e]=$REPLY     # speed lines
-        fg 153; INK[z]=$REPLY     # z's
-        fg 255; INK[c]=$REPLY     # clouds
-        fg 220; INK[u]=$REPLY     # sun
-        fg 229; INK[m]=$REPLY     # moon
-        fg 240; INK[k]=$REPLY     # stars
-        unfunction fg
+        C256=1
+        apply_theme $THEME
     else
         PAL_HEAT=($C_GREEN $C_GREEN $C_GREEN $C_GREEN $C_GREEN $C_YELLOW $C_YELLOW $C_YELLOW $C_RED $C_RED)
         PAL_COOL=($C_BLUE $C_BLUE $C_BLUE $C_BLUE $C_BLUE $C_CYAN $C_CYAN $C_CYAN $C_CYAN $C_CYAN)
         PAL_WARM=("${(@)PAL_HEAT/*/$C_YELLOW}")
         PAL_VIOLET=("${(@)PAL_HEAT/*/$C_MAGENTA}")
         C_FRAME=$C_GRAY C_TRACK=$C_GRAY C_GROUND=$C_GREEN
-        ACCENT=(cpu $C_BLUE mem $C_MAGENTA temp $C_RED power $C_YELLOW gpu $C_CYAN net $C_GREEN disk $C_MAGENTA sys $C_RESET proc $C_GREEN)
-        INK=(o $C_GREEN s $C_GREEN h $C_YELLOW l $C_GREEN e $C_GRAY z $C_CYAN c $C_RESET u $C_YELLOW m $C_YELLOW k $C_GRAY)
+        ACCENT=(cpu $C_BLUE mem $C_MAGENTA temp $C_RED power $C_YELLOW gpu $C_CYAN net $C_GREEN
+                disk $C_MAGENTA sys $C_RESET bt $C_BLUE proc $C_GREEN)
+        INK=(o $C_GREEN s $C_GREEN h $C_YELLOW l $C_GREEN e $C_GRAY z $C_CYAN c $C_RESET u $C_YELLOW
+             m $C_YELLOW k $C_GRAY w $C_CYAN b $C_RESET B $C_GREEN f $C_RESET fw1 $C_RED fw2 $C_YELLOW
+             fw3 $C_GREEN fw4 $C_CYAN fw5 $C_MAGENTA fw6 $C_BLUE)
     fi
+}
+
+# Themes change the 256-color look; 8-color terminals keep the basic colors.
+apply_theme() {   # name
+    (( C256 )) || return 0
+    local e=$'\e[38;5;' c i
+    local -a heat cool warm violet ui turtle panels=(cpu mem temp power gpu net disk sys bt proc)
+    heat=(41 77 113 149 185 221 215 209 203 197)
+    cool=(24 25 31 32 38 39 45 51 87 123)
+    warm=(94 130 136 172 178 214 220 221 227 229)
+    violet=(54 55 91 92 128 129 135 165 171 177)
+    #       o  s  h   l   e   z   c   u   m   k   w   b   B  f   fw1 fw2 fw3 fw4 fw5 fw6
+    turtle=(34 28 150 107 244 153 255 220 229 240 117 250 77 255 196 214 226 46  51  201)
+    #             frame track gray ground cpu mem temp power gpu net disk sys bt  proc
+    case $1 in
+        ocean)  ui=(24  236   109  31     81  117 210  229   45  50  147  152 75  86) ;;
+        sunset) ui=(95  237   181  136    209 175 203  221   216 180 168  223 211 215) ;;
+        mono)   ui=(240 236   245  245    255 252 250  254   253 251 249  247 252 252)
+                heat=(238 240 242 244 246 248 250 252 254 255)
+                cool=($heat) warm=($heat) violet=($heat)
+                turtle=(250 244 252 246 242 252 255 255 255 240 250 248 252 255 255 252 250 248 246 244) ;;
+        *)      ui=(240 237   245  71     75  141 209  220   39  43  176  250 33  114) ;;
+    esac
+    PAL_HEAT=() PAL_COOL=() PAL_WARM=() PAL_VIOLET=()
+    for c in $heat; do PAL_HEAT+=("$e${c}m"); done
+    for c in $cool; do PAL_COOL+=("$e${c}m"); done
+    for c in $warm; do PAL_WARM+=("$e${c}m"); done
+    for c in $violet; do PAL_VIOLET+=("$e${c}m"); done
+    C_FRAME="$e${ui[1]}m" C_TRACK="$e${ui[2]}m" C_GRAY="$e${ui[3]}m" C_GROUND="$e${ui[4]}m"
+    for (( i = 1; i <= $#panels; i++ )); do ACCENT[$panels[i]]="$e${ui[i + 4]}m"; done
+    for (( i = 1; i <= $#INK_KEYS; i++ )); do INK[$INK_KEYS[i]]="$e${turtle[i]}m"; done
+    GRADIENT=()
+    THEME=$1
 }
 setup_colors
 
@@ -110,30 +126,40 @@ usage() {
     printf '%s\n' "${C_BOLD}${me}${C_RESET} ${C_GRAY}— a live, animated dashboard of your Mac's vital signs${C_RESET}"
     printf '\n'
     printf '%s\n' "${C_BOLD}USAGE${C_RESET}"
-    printf '  %s\n' "${me} [--interval SECONDS] [--fahrenheit]"
+    printf '  %s\n' "${me} [--interval N] [--fahrenheit] [--theme NAME] [--sky MODE]"
     printf '  %s\n' "${me} --once"
     printf '\n'
     printf '%s\n' "${C_BOLD}SHOWS${C_RESET}"
     printf '  %s\n' "CPU usage per core and load, GPU usage, memory and pressure, chip, SSD"
-    printf '  %s\n' "and battery temperatures, fan speeds, battery and power draw, network and"
-    printf '  %s\n' "disk throughput, system facts and the busiest processes. Everything macOS"
-    printf '  %s\n' "reports without sudo. The turtle walks faster the busier your CPU gets,"
-    printf '  %s\n' "and takes a nap when the Mac is idle."
+    printf '  %s\n' "and battery temperatures, fan speeds, battery and power draw, Bluetooth"
+    printf '  %s\n' "device batteries, network and disk throughput, system facts and the"
+    printf '  %s\n' "busiest processes. Everything macOS reports without sudo. The turtle walks"
+    printf '  %s\n' "faster the busier your CPU gets, sweats when the chip runs hot, carries a"
+    printf '  %s\n' "battery while charging and takes a nap when the Mac is idle."
     printf '\n'
     printf '%s\n' "${C_BOLD}OPTIONS${C_RESET}"
     printf '  %s%-18s%s %s\n' "$C_CYAN" "-i, --interval N" "$C_RESET" "Seconds between samples, 1 to 60 (default: 2)."
     printf '  %s%-18s%s %s\n' "$C_CYAN" "-F, --fahrenheit" "$C_RESET" "Show temperatures in °F."
+    printf '  %s%-18s%s %s\n' "$C_CYAN" "-t, --theme NAME" "$C_RESET" "Colors: ${(j:, :)THEMES} (default: turtle, or"
+    printf '  %s%-18s%s %s\n' ""        ""                 ""         "\$SYSTEM_STATS_THEME)."
+    printf '  %s%-18s%s %s\n' "$C_CYAN" "--sky MODE"       "$C_RESET" "auto (default), day, night, snow or fireworks."
     printf '  %s%-18s%s %s\n' "$C_CYAN" "-1, --once"       "$C_RESET" "Print one snapshot and exit, no animation."
     printf '  %s%-18s%s %s\n' "$C_CYAN" "-h, --help"       "$C_RESET" "Show this help and exit."
     printf '\n'
     printf '%s\n' "${C_BOLD}KEYS${C_RESET}"
     printf '  %s%-18s%s %s\n' "$C_CYAN" "q"                "$C_RESET" "Quit (Ctrl-C works too)."
     printf '  %s%-18s%s %s\n' "$C_CYAN" "p, space"         "$C_RESET" "Pause and resume."
+    printf '  %s%-18s%s %s\n' "$C_CYAN" "1 … 9, 0"         "$C_RESET" "Hide or show a panel (its number is in its corner)."
+    printf '  %s%-18s%s %s\n' "$C_CYAN" "z, then 1 … 0"    "$C_RESET" "Zoom a panel to full width with big graphs;"
+    printf '  %s%-18s%s %s\n' ""        ""                 ""         "z or Esc goes back."
+    printf '  %s%-18s%s %s\n' "$C_CYAN" "t"                "$C_RESET" "Switch the color theme."
     printf '  %s%-18s%s %s\n' "$C_CYAN" "f"                "$C_RESET" "Switch between °C and °F."
     printf '\n'
     printf '%s\n' "${C_BOLD}EXAMPLES${C_RESET}"
     printf '  %s\n' "${me}                 ${C_GRAY}# live dashboard, a sample every 2 s${C_RESET}"
     printf '  %s\n' "${me} -i 5 -F         ${C_GRAY}# every 5 s, in Fahrenheit${C_RESET}"
+    printf '  %s\n' "${me} -t ocean        ${C_GRAY}# in blues${C_RESET}"
+    printf '  %s\n' "${me} --sky snow      ${C_GRAY}# let it snow, whatever the month${C_RESET}"
     printf '  %s\n' "${me} --once | less   ${C_GRAY}# a single snapshot${C_RESET}"
     printf '\n'
     printf '%s\n' "${C_GRAY}Temperatures, fans and per-core load need the Xcode Command Line Tools"
@@ -366,7 +392,6 @@ BAR_FULL=${(l:300::█:)}
 BAR_EMPTY=${(l:300::░:)}
 EIGHTHS=('' ▏ ▎ ▍ ▌ ▋ ▊ ▉)
 SPARKS=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █)
-typeset -gA GRADIENT
 
 bar() {   # percent width [palette-name|color] -> a bar with eighth-block precision
     local -F v=${1:-0}
@@ -596,6 +621,48 @@ collect_probe() {
     S_FANS=${S_FANS%$'\n'}
 }
 
+# Connected Bluetooth devices, one per line: name<TAB>kind<TAB>part=percent ...
+# AirPods report left, right and case; keyboards and mice a single battery.
+collect_bluetooth() {
+    local out extra line
+    out=$(system_profiler SPBluetoothDataType 2>/dev/null)
+    if [[ -z $out ]]; then S_BT_POWER="" S_BT=""; return; fi
+    if [[ $out == *"State: On"* ]]; then S_BT_POWER=on; else S_BT_POWER=off; fi
+    S_BT=$(parse_bluetooth <<<"$out")
+    # Apple keyboards, mice and trackpads also report through IOKit
+    extra=$(ioreg -r -l -k BatteryPercent -w0 2>/dev/null | awk -F' = ' '
+        /\+-o / { if (p != "" && b != "") print p "\t\tbattery=" b; p = ""; b = "" }
+        /"Product" = / { p = $2; gsub(/"/, "", p) }
+        /"BatteryPercent" = / { b = $2 + 0 }
+        END { if (p != "" && b != "") print p "\t\tbattery=" b }')
+    for line in "${(@f)extra}"; do
+        [[ -n $line && $'\n'$S_BT$'\n' != *$'\n'"${line%%$'\t'*}"$'\t'* ]] && S_BT+="${S_BT:+$'\n'}$line"
+    done
+}
+
+parse_bluetooth() {   # system_profiler SPBluetoothDataType on stdin
+    awk '
+        function flush() { if (name != "") printf "%s\t%s\t%s\n", name, kind, bats; name = "" }
+        {
+            match($0, /^ */); ind = RLENGTH; line = substr($0, ind + 1)
+            if (line == "Connected:") { section = ind; on = 1; dev = 0; next }
+            if (on && line != "" && ind <= section) { flush(); on = 0 }
+            if (!on || line == "") next
+            if (!dev) dev = ind
+            if (ind == dev && line ~ /:$/) {
+                flush(); name = substr(line, 1, length(line) - 1); kind = ""; bats = ""; next
+            }
+            if (line ~ /^Minor Type: /) kind = substr(line, 13)
+            else if (line ~ /Battery Level: [0-9]+%/) {
+                part = line; sub(/ ?Battery Level:.*/, "", part)
+                if (part == "") part = "battery"
+                pct = line; sub(/.*: /, "", pct); sub(/%.*/, "", pct)
+                bats = bats (bats == "" ? "" : " ") tolower(part) "=" pct
+            }
+        }
+        END { flush() }'
+}
+
 COLLECT_TICK=0
 collect_dynamic() {
     local now=$EPOCHREALTIME line out k v
@@ -713,8 +780,11 @@ collect_dynamic() {
     PREV_DR=$S_DISK_READ_TOTAL PREV_DW=$S_DISK_WRITE_TOTAL
 
     # Busiest processes
-    S_TOP_CPU=$(ps -Aceo pcpu=,rss=,comm= -r 2>/dev/null | head -n 5)
-    S_TOP_MEM=$(ps -Aceo pcpu=,rss=,comm= -m 2>/dev/null | head -n 5)
+    S_TOP_CPU=$(ps -Aceo pcpu=,rss=,comm= -r 2>/dev/null | head -n 12)
+    S_TOP_MEM=$(ps -Aceo pcpu=,rss=,comm= -m 2>/dev/null | head -n 12)
+
+    # Bluetooth devices change rarely, and asking is the slowest call here
+    (( COLLECT_TICK % 8 == 1 )) && collect_bluetooth
 
     PREV_T=$now
 }
@@ -746,6 +816,7 @@ typeset -ga H_CPU H_MEM H_GPU H_WATTS H_TEMP H_RX H_TX H_DR H_DW
 typeset -gF TX=4 TDIST=0  # turtle position and distance walked
 LAST_SEQ=0
 FRAME=0
+SPARKS_ON=1               # small sparklines, off in snapshots and zoom
 
 push() {   # history-name value
     local name=$1
@@ -769,7 +840,11 @@ on_sample() {
     T[gpu_tiler]=${S_GPU_TILER:-0}
     T[batt]=${S_BATT_PCT:-0}
     T[disk]=$(( ${S_DISK_TOTAL:-0} > 0 ? 100.0 * S_DISK_USED / S_DISK_TOTAL : 0 ))
-    for c in ${=S_CORE_PCT}; do T[core$(( ++i ))]=$c; done
+    for c in ${=S_CORE_PCT}; do
+        (( ++i ))
+        T[core$i]=$c
+        push H_CORE_$i $c
+    done
     for c in CPU GPU DIE BOARD SSD BATTERY; do
         v=S_TEMP_$c
         [[ -n ${(P)v} ]] && T[temp_$c]=${(P)v}
@@ -809,9 +884,69 @@ SPRITE_W=17
 CLOUD_TOP=' .-~~-. '
 CLOUD_BOT='(______)'
 
-typeset -ga STARS SPRITE MASK CLOUDS LANE_CH LANE_INK
+typeset -ga STARS SPRITE MASK CLOUDS LANE_CH LANE_INK FLAKES BURSTS
 SKY_W=0
 LANE_W=0
+SKY_NIGHT=0 SKY_SNOW=0 SKY_FIREWORKS=0
+
+# A firework bursts in five stages, each three rows tall around its center
+BURST_STAGES=(
+    ''        '*'       ''
+    '.'       '-*-'     "'"
+    '\ | /'   '-   -'   '/ | \'
+    ".  '  ." "'     '" '.  .  .'
+    '·     ·' ''        '·     ·'
+)
+
+sky_state() {   # what the sky looks like right now
+    local now
+    local -a t
+    strftime -s now '%m %d %H' $EPOCHSECONDS
+    t=(${=now})
+    (( t[1] = 10#$t[1], t[2] = 10#$t[2], t[3] = 10#$t[3] ))
+    SKY_NIGHT=$(( t[3] >= 20 || t[3] < 7 ))
+    SKY_SNOW=$(( t[1] == 12 || t[1] <= 2 ))
+    SKY_FIREWORKS=$(( (t[1] == 12 && t[2] == 31 && t[3] >= 20) || (t[1] == 1 && t[2] == 1 && t[3] < 3) ))
+    case $SKY_MODE in
+        day) SKY_NIGHT=0 SKY_SNOW=0 SKY_FIREWORKS=0 ;;
+        night) SKY_NIGHT=1 SKY_SNOW=0 SKY_FIREWORKS=0 ;;
+        snow) SKY_SNOW=1 ;;
+        fireworks) SKY_NIGHT=1 SKY_FIREWORKS=1 ;;
+    esac
+}
+
+let_it_snow() {   # seconds -> flakes drift down and start over at the top
+    local -F dt=$1 x y
+    local i
+    local -a f
+    if (( ! SKY_SNOW || ! SKY_W )); then FLAKES=(); return; fi
+    if (( ! $#FLAKES )); then
+        for (( i = 0; i < SKY_W / 5; i++ )); do
+            FLAKES+=("$(( RANDOM % SKY_W + 1 )) $(( RANDOM % 400 / 100.0 )) 0.$(( RANDOM % 6 + 4 )) ${${:-'*·.'}[RANDOM % 3 + 1]}")
+        done
+    fi
+    for (( i = 1; i <= $#FLAKES; i++ )); do
+        f=(${=FLAKES[i]})
+        y=$(( f[2] + f[3] * 1.2 * dt ))
+        x=$(( f[1] + sin(y * 2 + i) * 0.8 * dt ))
+        if (( y >= 4 )); then y=0 x=$(( RANDOM % SKY_W + 1 )); fi
+        FLAKES[i]="$x $y $f[3] $f[4]"
+    done
+}
+
+light_fireworks() {   # seconds -> new rockets burst, old ones fade
+    local -F dt=$1 t
+    local b
+    local -a f keep
+    if (( ! SKY_FIREWORKS || SKY_W < 20 )); then BURSTS=(); return; fi
+    (( RANDOM % 100 < 5 && $#BURSTS < 4 )) && BURSTS+=("$(( RANDOM % (SKY_W - 12) + 6 )) 0 fw$(( RANDOM % 6 + 1 ))")
+    for b in "${BURSTS[@]}"; do
+        f=(${=b})
+        t=$(( f[2] + dt ))
+        (( t < 1.0 )) && keep+=("$f[1] $t $f[3]")
+    done
+    BURSTS=("${keep[@]}")
+}
 
 make_sky() {   # width -> scattered stars, and clouds at random places
     local w=$1 i r row
@@ -871,6 +1006,22 @@ move_turtle() {   # seconds since the last frame, lane width
             mmid=" e  ${MASK_MID[5,-1]}" mbot="e  ${MASK_BOT[4,-1]}"
         fi
     fi
+    # Charging: a battery rides on the shell, filling up over and over
+    if [[ $S_BATT_STATE == (charging|finishing charge) ]]; then
+        local filled=$(( FRAME / 5 % 4 ))
+        top="      [${(l:filled::▮:)}${(l:3-filled::▯:)}]ϟ${top[13,-1]}"
+        mtop="      bBBBbu${mtop[13,-1]}"
+    fi
+    # Running hot: beads of sweat fly off its head
+    hottest
+    if (( speed > 0 )) && [[ -n $REPLY ]] && (( REPLY >= 80 )); then
+        if (( FRAME / 4 % 2 )); then
+            top="${top[1,13]}  ' " mtop="${mtop[1,13]}  w "
+        else
+            top="${top[1,13]}   '" mtop="${mtop[1,13]}   w"
+            mid="${mid[1,16]}," mmid="${mmid[1,16]}w"
+        fi
+    fi
     (( TX += speed * dt, TDIST += speed * dt ))
     (( TX > w )) && TX=$(( 1 - SPRITE_W ))
     if (( speed == 0 || int(TDIST / 1.5) % 2 )); then legs=$LEGS_B; else legs=$LEGS_A; fi
@@ -891,14 +1042,14 @@ stamp() {   # row col text ink -> paint text into the lane; spaces stay see-thro
 }
 
 draw_lane() {   # width -> reply: four rows of sky with the turtle walking in them
-    local w=$1 r i k c s m ink prev out hour night first last
+    local w=$1 r i k c s m ink prev out night first last stage row piece
     local -a cl
     LANE_W=$w
-    strftime -s hour '%H' $EPOCHSECONDS
-    (( night = 10#$hour >= 20 || 10#$hour < 7 ))
+    sky_state
+    night=$SKY_NIGHT
     LANE_CH=()
     for r in 1 2 3 4; do
-        if (( night && r <= 2 )); then LANE_CH+=("${(@s::)STARS[r]}")
+        if (( night && r <= 2 )); then LANE_CH+=("${(@s::)${(r:w:: :)STARS[r]}}")
         else LANE_CH+=("${(@s::)${(l:w:: :)}}"); fi
     done
     LANE_INK=("${(@)LANE_CH/*/k}")
@@ -912,6 +1063,22 @@ draw_lane() {   # width -> reply: four rows of sky with the turtle walking in th
             stamp $(( cl[2] + 1 )) $(( int(cl[1]) )) "$CLOUD_BOT" c
         done
     fi
+    for c in "${BURSTS[@]}"; do
+        cl=(${=c})
+        stage=$(( int(cl[2] / 0.2) ))
+        (( stage > 4 )) && stage=4
+        for row in 1 2 3; do
+            piece=${BURST_STAGES[stage*3+row]}
+            [[ -n $piece ]] || continue
+            # The last stage fades to the color of the stars
+            if (( stage == 4 )); then ink=k; else ink=$cl[3]; fi
+            stamp $row $(( cl[1] - (${#piece} - 1) / 2 )) "$piece" $ink
+        done
+    done
+    for c in "${FLAKES[@]}"; do
+        cl=(${=c})
+        stamp $(( int(cl[2]) + 1 )) $(( int(cl[1]) )) "$cl[4]" f
+    done
     # The turtle goes on top, and is solid: the sky never shows through its shell
     for r in 1 2 3 4; do
         s=$SPRITE[r] m=$MASK[r]
@@ -940,11 +1107,11 @@ draw_lane() {   # width -> reply: four rows of sky with the turtle walking in th
 # --- Panels ----------------------------------------------------------------
 
 panel() {   # width title accent lines... -> reply: the boxed panel
-    local w=$1 title=" $2 " acc=$3 l
+    local w=$1 title=" $2 " acc=$3 l tag=${PANEL_KEY:+" $PANEL_KEY ─"}
     shift 3
-    local iw=$(( w - 4 )) dash=$(( w - 3 - ${#title} ))
-    (( dash < 1 )) && { title=" ${title[2,w-6]}… "; dash=$(( w - 3 - ${#title} )); }
-    reply=("${C_FRAME}╭─${C_RESET}${C_BOLD}${acc}${title}${C_RESET}${C_FRAME}${(l:dash::─:)}╮${C_RESET}")
+    local iw=$(( w - 4 )) dash=$(( w - 3 - ${#title} - ${#tag} ))
+    (( dash < 1 )) && { title=" ${title[2,w-8-${#tag}]}… "; dash=$(( w - 3 - ${#title} - ${#tag} )); }
+    reply=("${C_FRAME}╭─${C_RESET}${C_BOLD}${acc}${title}${C_RESET}${C_FRAME}${(l:dash::─:)}${tag}╮${C_RESET}")
     for l in "$@"; do
         fit "$l" $iw
         reply+=("${C_FRAME}│${C_RESET} ${REPLY} ${C_FRAME}│${C_RESET}")
@@ -988,7 +1155,7 @@ cpu_lines() {
     fi
     heat $(( ${S_LOAD1:-0} * 100.0 / ${S_NCPU:-1} ))
     lines+=("${C_GRAY}load     ${C_RESET}${REPLY}${S_LOAD1:-…}${C_RESET}  ${S_LOAD5:-…}  ${S_LOAD15:-…}  ${C_GRAY}1 · 5 · 15 min${C_RESET}")
-    if (( ! ONCE )); then
+    if (( SPARKS_ON )); then
         spark2 $w 100 PAL_HEAT $H_CPU
         lines+=("${reply[@]}")
     fi
@@ -1010,7 +1177,7 @@ mem_lines() {
     pct $D[pressure]; labeled_bar pressure $D[pressure] $w "$REPLY"; lines+=("$REPLY")
     lines+=("${C_GRAY}app ${C_RESET}$app${C_GRAY} · wired ${C_RESET}$wired${C_GRAY} · compressed ${C_RESET}$comp")
     lines+=("${C_GRAY}cached files ${C_RESET}$cached${C_GRAY} · swap ${C_RESET}$swap${C_RESET}")
-    if (( ! ONCE )); then
+    if (( SPARKS_ON )); then
         spark2 $w 100 PAL_VIOLET $H_MEM
         lines+=("${reply[@]}")
     fi
@@ -1057,7 +1224,7 @@ temp_lines() {
     else
         lines+=("${C_GRAY}pressure ${C_RESET}${C_RED}${S_THERMAL}${C_RESET}")
     fi
-    if (( ! ONCE && any )); then
+    if (( SPARKS_ON && any )); then
         spark $w 105 PAL_HEAT $H_TEMP
         lines+=("$REPLY")
     fi
@@ -1091,7 +1258,7 @@ power_lines() {
         [[ -n $S_BATT_VOLTS ]] && printf -v s '%s · %s%.2fV' "$C_GRAY" "$C_RESET" $S_BATT_VOLTS
         lines+=("${C_GRAY}health ${C_RESET}${S_BATT_HEALTH:-…}%${C_GRAY} · cycles ${C_RESET}${S_BATT_CYCLES}${s}")
     fi
-    if (( ! ONCE )) && [[ -n $S_SYS_WATTS$S_BATT_WATTS ]]; then
+    if (( SPARKS_ON )) && [[ -n $S_SYS_WATTS$S_BATT_WATTS ]]; then
         spark2 $w 0 PAL_WARM $H_WATTS
         lines+=("${reply[@]}")
     fi
@@ -1112,7 +1279,7 @@ gpu_lines() {
     pct $D[gpu_tiler];  labeled_bar tiler    $D[gpu_tiler]  $w "$REPLY"; lines+=("$REPLY")
     human_bytes $S_GPU_MEM; mem=$REPLY
     lines+=("${C_GRAY}memory in use ${C_RESET}$mem")
-    if (( ! ONCE )); then spark $w 100 PAL_COOL $H_GPU; lines+=("$REPLY"); fi
+    if (( SPARKS_ON )); then spark $w 100 PAL_COOL $H_GPU; lines+=("$REPLY"); fi
     reply=("${lines[@]}")
 }
 
@@ -1121,7 +1288,7 @@ rate_line() {   # label rate width palette history... -> "label  1.2M/s  ▁▂�
     shift 4
     human_rate $rate
     text="${C_GRAY}${(r:9:)label}${C_RESET}${(l:8:)REPLY}"
-    if (( ONCE )); then
+    if (( ! SPARKS_ON )); then
         REPLY=$text
     else
         spark $(( w - 19 )) 0 $pal "$@"
@@ -1176,8 +1343,33 @@ system_lines() {
     reply=("${lines[@]}")
 }
 
-proc_lines() {   # cpu|mem -> reply: the five busiest processes with mini bars
-    local which=$1 line mem text pal=PAL_HEAT tag=CPU
+bt_lines() {
+    local w=$1 line comp ink n=0
+    local -i level
+    local -a f parts lines
+    if [[ -z $S_BT_POWER ]]; then reply=("${C_GRAY}No Bluetooth on this Mac.${C_RESET}"); return; fi
+    if [[ $S_BT_POWER == off ]]; then reply=("${C_GRAY}Bluetooth is off.${C_RESET}"); return; fi
+    if [[ -z $S_BT ]]; then reply=("${C_GRAY}No devices connected.${C_RESET}"); return; fi
+    for line in "${(@f)S_BT}"; do
+        f=("${(@ps:\t:)line}")
+        lines+=("${C_BOLD}${f[1]}${C_RESET}${f[2]:+${C_GRAY} · ${(L)f[2]}${C_RESET}}")
+        parts=(${=f[3]})
+        (( $#parts )) || lines+=("${C_GRAY}connected, no battery reading${C_RESET}")
+        for comp in $parts; do
+            level=${comp#*=}
+            if (( level <= 20 )); then ink=$PAL_HEAT[10]
+            elif (( level <= 50 )); then ink=$PAL_HEAT[6]
+            else ink=$PAL_HEAT[2]; fi
+            labeled_bar "${comp%%=*}" $level $w "$level%" "$ink"
+            lines+=("$REPLY")
+        done
+        (( ++n >= 4 )) && break
+    done
+    reply=("${lines[@]}")
+}
+
+proc_lines() {   # cpu|mem [count] -> reply: the busiest processes with mini bars
+    local which=$1 limit=${2:-5} n=0 line mem text pal=PAL_HEAT tag=CPU
     local -F share
     local -a f lines
     [[ $which == mem ]] && pal=PAL_VIOLET tag=RAM
@@ -1193,11 +1385,69 @@ proc_lines() {   # cpu|mem -> reply: the five busiest processes with mini bars
         human_bytes $(( f[2] * 1024 )); mem=$REPLY
         printf -v line '%s %6.1f  %6s  %s' "$text" $f[1] "$mem" "${f[3,-1]}"
         lines+=("$line")
+        (( ++n >= limit )) && break
     done
     reply=("${lines[@]}")
 }
 
+fmt_pct() { pct $1; }
+fmt_temp() { degrees $1; }
+fmt_watts() { printf -v REPLY '%.0fW' ${1:-0}; }
+fmt_rate() { human_rate $1; }
+
+typeset -gA CHART_CACHE
+chart() {   # width height max palette formatter values... -> reply: an area chart with a y axis
+    local w=$1 h=$2 pal=$4 fmt=$5 v r lvl base row lab span pad
+    local -F top=$3
+    shift 5
+    local lw=8 cw=$(( w - 9 ))
+    local key="$w $h $pal $fmt $3 $LAST_SEQ $# $THEME $FAHRENHEIT"
+    # Charts only change with a new sample, so draw each one once
+    if [[ -n ${CHART_CACHE[$key]} ]]; then reply=("${(@f)CHART_CACHE[$key]}"); return; fi
+    local -a vals=("$@") ink=("${(@P)pal}") lv
+    (( $#vals > cw )) && vals=("${(@)vals[-cw,-1]}")
+    if (( top <= 0 )); then
+        top=1
+        for v in $vals; do (( v > top )) && top=$v; done
+    fi
+    for v in $vals; do lv+=($(( int(v / top * h * 8 + 0.5) ))); done
+    pad=$(( cw - $#lv ))
+    reply=()
+    for (( r = 1; r <= h; r++ )); do
+        base=$(( (h - r) * 8 ))
+        row=''
+        for lvl in $lv; do
+            if (( lvl >= base + 8 )); then row+='█'
+            elif (( lvl > base )); then row+=${SPARKS[lvl - base]}
+            else row+=' '; fi
+        done
+        lab=''
+        if (( r == 1 )); then $fmt $top; lab=$REPLY
+        elif (( r == (h + 1) / 2 )); then $fmt $(( top * (h - r + 1) / h )); lab=$REPLY
+        elif (( r == h )); then $fmt 0; lab=$REPLY; fi
+        reply+=("${C_GRAY}${(l:lw:)lab}┤${C_RESET}${ink[(h - r) * $#ink / h + 1]}${(l:pad:: :)}${row}${C_RESET}")
+    done
+    span=$(( cw * INTERVAL ))
+    if (( span < 120 )); then lab="${span}s"; else human_duration $span; lab=$REPLY; fi
+    lab=" ← ${lab} ago "
+    reply+=("${C_GRAY}${(l:lw:)}└─${lab}${(l:cw-${#lab}-6::─:)} now${C_RESET}")
+    (( ${#CHART_CACHE} > 12 )) && CHART_CACHE=()
+    CHART_CACHE[$key]=${(F)reply}
+}
+
 # --- Layout ----------------------------------------------------------------
+# Panels are numbered 1-9 and 0 in this order; the numbers hide, show and zoom.
+
+PANELS=(cpu mem temp power gpu net disk sys bt proc)
+typeset -gA PANEL_TITLE PANEL_BUILDER HIDDEN
+PANEL_TITLE=(cpu "◆ CPU" mem "▦ MEMORY" temp "▲ THERMALS" power "ϟ POWER" gpu "◈ GPU"
+             net "⇅ NETWORK" disk "◍ DISK" sys "● SYSTEM" bt "◉ BLUETOOTH" proc "▸ PROCESSES")
+PANEL_BUILDER=(cpu cpu_lines mem mem_lines temp temp_lines power power_lines gpu gpu_lines
+               net net_lines disk disk_lines sys system_lines bt bt_lines)
+ZOOM=""
+ZOOM_PICK=0
+
+key_of() { REPLY=$(( ${PANELS[(Ie)$1]} % 10 )); }
 
 typeset -ga OUT
 add_block() {   # lines... -> appended to OUT if the whole block still fits
@@ -1206,30 +1456,34 @@ add_block() {   # lines... -> appended to OUT if the whole block still fits
     OUT+=("$@")
 }
 
-row() {   # titleA builderA accentA titleB builderB accentB
-    local -a a b pa pb lines
-    local i n
-    $2 $IW; a=("${reply[@]}")
-    $5 $IW; b=("${reply[@]}")
-    if (( TWO )); then
-        n=$(( $#a > $#b ? $#a : $#b ))
-        while (( $#a < n )); do a+=(''); done
-        while (( $#b < n )); do b+=(''); done
-        panel $PW "$1" "$3" "${a[@]}"; pa=("${reply[@]}")
-        panel $PW "$4" "$6" "${b[@]}"; pb=("${reply[@]}")
-        for (( i = 1; i <= $#pa; i++ )); do lines+=("${pa[i]} ${pb[i]}"); done
-        add_block "${lines[@]}"
-    else
-        panel $PW "$1" "$3" "${a[@]}"; add_block "${reply[@]}"
-        panel $PW "$4" "$6" "${b[@]}"; add_block "${reply[@]}"
-    fi
+pair_row() {   # two panels side by side, padded to the same height
+    local a=$1 b=$2 i n
+    local -a la lb pa pb lines
+    $PANEL_BUILDER[$a] $IW; la=("${reply[@]}")
+    $PANEL_BUILDER[$b] $IW; lb=("${reply[@]}")
+    n=$(( $#la > $#lb ? $#la : $#lb ))
+    while (( $#la < n )); do la+=(''); done
+    while (( $#lb < n )); do lb+=(''); done
+    key_of $a; PANEL_KEY=$REPLY panel $PW "$PANEL_TITLE[$a]" "$ACCENT[$a]" "${la[@]}"; pa=("${reply[@]}")
+    key_of $b; PANEL_KEY=$REPLY panel $PW "$PANEL_TITLE[$b]" "$ACCENT[$b]" "${lb[@]}"; pb=("${reply[@]}")
+    for (( i = 1; i <= $#pa; i++ )); do lines+=("${pa[i]} ${pb[i]}"); done
+    add_block "${lines[@]}"
 }
 
-processes_block() {   # both process lists, side by side when there's room
+single_row() {   # name width [extra lines...]
+    local p=$1 w=$2
+    shift 2
+    local -a body
+    $PANEL_BUILDER[$p] $(( w - 4 )); body=("${reply[@]}" "$@")
+    key_of $p; PANEL_KEY=$REPLY panel $w "$PANEL_TITLE[$p]" "$ACCENT[$p]" "${body[@]}"
+    add_block "${reply[@]}"
+}
+
+processes_block() {   # count -> both process lists, side by side when there's room
     local -a a b lines
-    local i n half
-    proc_lines cpu; a=("${reply[@]}")
-    proc_lines mem; b=("${reply[@]}")
+    local i n half count=${1:-5}
+    proc_lines cpu $count; a=("${reply[@]}")
+    proc_lines mem $count; b=("${reply[@]}")
     if (( TWO )); then
         half=$(( (HW - 4 - 3) / 2 ))
         n=$(( $#a > $#b ? $#a : $#b ))
@@ -1237,14 +1491,64 @@ processes_block() {   # both process lists, side by side when there's room
             fit "${a[i]:-}" $half
             lines+=("$REPLY ${C_FRAME}│${C_RESET} ${b[i]:-}")
         done
-        panel $HW "▸ PROCESSES" "$ACCENT[proc]" "${lines[@]}"; add_block "${reply[@]}"
+        PANEL_KEY=0 panel $HW "$PANEL_TITLE[proc]" "$ACCENT[proc]" "${lines[@]}"
     else
-        panel $PW "▸ PROCESSES" "$ACCENT[proc]" "${a[@]}" "" "${b[@]}"; add_block "${reply[@]}"
+        PANEL_KEY=0 panel $PW "$PANEL_TITLE[proc]" "$ACCENT[proc]" "${a[@]}" "" "${b[@]}"
     fi
+    add_block "${reply[@]}"
+}
+
+zoom_view() {   # rows -> the zoomed panel at full width, with big graphs
+    local H=$1 p=$ZOOM w=$(( HW - 4 )) avail h i n label
+    local -a body extra types
+    if [[ $p == proc ]]; then processes_block 12; return; fi
+    $PANEL_BUILDER[$p] $w; body=("${reply[@]}")
+    avail=$(( H - $#OUT - $#body - 3 ))
+    (( avail > 24 )) && avail=24
+    if (( avail >= 4 )); then
+        case $p in
+            cpu)
+                n=${#${=S_CORE_PCT}}
+                h=$(( avail - 2 - (avail - 2 >= n + 4 ? n + 1 : 0) ))
+                chart $w $h 100 PAL_HEAT fmt_pct $H_CPU; extra=('' "${reply[@]}")
+                if (( avail - 2 >= n + 4 )); then
+                    # One sparkline per core, labeled by cluster: E1, E2, …, S1, …
+                    extra+=('')
+                    local -A seen
+                    for (( i = 1; i <= n; i++ )); do
+                        label=${S_CORE_TYPES[i]:-·}
+                        [[ $label == P ]] && label=${S_PERF_NAME[1]:-P}
+                        (( seen[$label]++ ))
+                        spark $(( w - 9 )) 100 PAL_HEAT "${(@P)${:-H_CORE_$i}}"
+                        extra+=("${C_GRAY}${(l:8:)${:-$label$seen[$label]}} ${C_RESET}$REPLY")
+                    done
+                fi
+                ;;
+            mem)   chart $w $(( avail - 2 )) 100 PAL_VIOLET fmt_pct $H_MEM; extra=('' "${reply[@]}") ;;
+            temp)  chart $w $(( avail - 2 )) 105 PAL_HEAT fmt_temp $H_TEMP; extra=('' "${reply[@]}") ;;
+            power) chart $w $(( avail - 2 )) 0 PAL_WARM fmt_watts $H_WATTS; extra=('' "${reply[@]}") ;;
+            gpu)   chart $w $(( avail - 2 )) 100 PAL_COOL fmt_pct $H_GPU; extra=('' "${reply[@]}") ;;
+            net|disk)
+                h=$(( (avail - 1) / 2 - 2 ))
+                if (( h >= 2 )); then
+                    if [[ $p == net ]]; then
+                        chart $w $h 0 PAL_COOL fmt_rate $H_RX; extra=('' "${C_GRAY}↓ in${C_RESET}" "${reply[@]}")
+                        chart $w $h 0 PAL_HEAT fmt_rate $H_TX; extra+=("${C_GRAY}↑ out${C_RESET}" "${reply[@]}")
+                    else
+                        chart $w $h 0 PAL_COOL fmt_rate $H_DR; extra=('' "${C_GRAY}read${C_RESET}" "${reply[@]}")
+                        chart $w $h 0 PAL_VIOLET fmt_rate $H_DW; extra+=("${C_GRAY}write${C_RESET}" "${reply[@]}")
+                    fi
+                fi
+                ;;
+        esac
+    fi
+    key_of $p; PANEL_KEY=$REPLY panel $HW "$PANEL_TITLE[$p]" "$ACCENT[$p]" "${body[@]}" "${extra[@]}"
+    add_block "${reply[@]}"
 }
 
 build_frame() {   # columns rows -> OUT
     local W=$1 H=$2 title up temp=''
+    SPARKS_ON=$(( ! ONCE && ! ${#ZOOM} ))
     OUT=() FULL=0 MAXL=$H
     if (( W < 64 )); then
         OUT=("${C_YELLOW}Make the window wider: the dashboard needs 64 columns.${C_RESET}")
@@ -1268,14 +1572,53 @@ build_frame() {   # columns rows -> OUT
         add_block "${reply[@]}"
         return
     fi
-    row "◆ CPU" cpu_lines "$ACCENT[cpu]" "▦ MEMORY" mem_lines "$ACCENT[mem]"
-    row "▲ THERMALS" temp_lines "$ACCENT[temp]" "ϟ POWER" power_lines "$ACCENT[power]"
-    row "◈ GPU" gpu_lines "$ACCENT[gpu]" "⇅ NETWORK" net_lines "$ACCENT[net]"
-    row "◍ DISK" disk_lines "$ACCENT[disk]" "● SYSTEM" system_lines "$ACCENT[sys]"
-    processes_block
+    if [[ -n $ZOOM ]]; then
+        SPARKS_ON=0
+        zoom_view $H
+        return
+    fi
+    SPARKS_ON=$(( ! ONCE ))
+    # Visible panels fill the rows two by two; an odd one out takes the full width
+    local p i
+    local -a shown
+    for p in $PANELS; do
+        [[ $p == proc ]] || (( ${HIDDEN[$p]:-0} )) || shown+=($p)
+    done
+    if (( TWO )); then
+        for (( i = 1; i <= $#shown; i += 2 )); do
+            if (( i < $#shown )); then pair_row $shown[i] $shown[i+1]; else single_row $shown[i] $HW; fi
+        done
+    else
+        for p in $shown; do single_row $p $PW; done
+    fi
+    (( ${HIDDEN[proc]:-0} )) || processes_block 5
 }
 
 # --- Live mode -------------------------------------------------------------
+
+TOAST="" TOAST_UNTIL=0
+toast() { TOAST=$1 TOAST_UNTIL=$(( EPOCHSECONDS + 3 )); }
+
+footer_keys() {   # -> REPLY: the key hints that fit what's on screen
+    local out='' name
+    local -a hidden
+    key() { out+="${C_RESET}${C_REV} $1 ${C_NOREV}${C_GRAY} $2  "; }
+    (( EPOCHSECONDS < TOAST_UNTIL )) && out="${C_BOLD}${TOAST}${C_RESET}   "
+    if (( ZOOM_PICK )); then
+        out+="${C_BOLD}Zoom into which panel?${C_RESET}${C_GRAY} press its number  "
+        key z cancel
+    elif [[ -n $ZOOM ]]; then
+        key z back; key 1…0 'other panels'; key q quit
+    else
+        key q quit; key p pause; key 1…0 hide/show; key z zoom; key t theme; key f °C/°F
+        for name in ${(k)HIDDEN}; do
+            (( HIDDEN[$name] )) && { key_of $name; hidden+=($REPLY); }
+        done
+        (( $#hidden )) && out+="${C_GRAY}hidden: ${(j: :)${(on)hidden}}"
+    fi
+    unfunction key
+    REPLY="$out$C_RESET"
+}
 
 ROWS=24 COLS=80
 get_size() {
@@ -1302,7 +1645,7 @@ cleanup() {
 }
 
 live() {
-    local key now last state paused=0
+    local key now last state p paused=0
     local -a spin=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
     local -F dt
 
@@ -1344,6 +1687,8 @@ live() {
             (( FRAME++ ))
             (( FRAME % 3 == 0 )) && twinkle
             drift_clouds $dt
+            let_it_snow $dt
+            light_fireworks $dt
             move_turtle $dt $(( SKY_W ? SKY_W : COLS - 4 ))
         fi
 
@@ -1353,7 +1698,8 @@ live() {
         else
             state="${ACCENT[cpu]}${spin[FRAME % $#spin + 1]}${C_RESET} live"
         fi
-        OUT+=(" $state${C_GRAY} · every ${INTERVAL}s · updated ${S_TIME:-…}   ${C_RESET}${C_REV} q ${C_NOREV}${C_GRAY} quit  ${C_RESET}${C_REV} p ${C_NOREV}${C_GRAY} pause  ${C_RESET}${C_REV} f ${C_NOREV}${C_GRAY} °C/°F${C_RESET}")
+        footer_keys
+        OUT+=(" $state${C_GRAY} · every ${INTERVAL}s · ${S_TIME:-…}   ${C_RESET}$REPLY")
         print -rn -- $'\e[H'"${(pj:\e[K\n:)OUT}"$'\e[K\e[J'
 
         key=''
@@ -1362,6 +1708,28 @@ live() {
             q|Q) break ;;
             p|P|' ') (( paused = !paused )) ;;
             f|F) (( FAHRENHEIT = !FAHRENHEIT )) ;;
+            t|T)
+                apply_theme $THEMES[$(( ${THEMES[(Ie)$THEME]} % $#THEMES + 1 ))]
+                toast "theme: $THEME"
+                ;;
+            z|Z)
+                if [[ -n $ZOOM ]]; then ZOOM=""; else (( ZOOM_PICK = !ZOOM_PICK )); fi
+                ;;
+            $'\e')
+                ZOOM="" ZOOM_PICK=0
+                ;;
+            [0-9])
+                p=$PANELS[$(( key == 0 ? 10 : key ))]
+                if (( ZOOM_PICK )) || [[ -n $ZOOM ]]; then
+                    ZOOM=$p ZOOM_PICK=0
+                elif (( ${HIDDEN[$p]:-0} )); then
+                    HIDDEN[$p]=0
+                    toast "showing ${PANEL_TITLE[$p]#* }"
+                else
+                    HIDDEN[$p]=1
+                    toast "hid ${PANEL_TITLE[$p]#* }, press $key to bring it back"
+                fi
+                ;;
         esac
     done
 }
@@ -1389,6 +1757,10 @@ once() {
     T[cpu]=50 D[cpu]=50   # keep the turtle awake and standing for the photo
     TX=$(( (COLS >= 110 ? COLS : (COLS > 84 ? 84 : COLS)) / 2 - SPRITE_W / 2 - 2 ))
     move_turtle 0 $COLS
+    sky_state
+    make_sky $(( (COLS >= 110 ? (COLS - 1) / 2 * 2 + 1 : (COLS > 84 ? 84 : COLS)) - 4 ))
+    let_it_snow 0
+    (( SKY_FIREWORKS )) && BURSTS=("$(( SKY_W / 4 )) 0.5 fw1" "$(( SKY_W * 2 / 3 )) 0.3 fw5")
     build_frame $COLS 10000
     print -rl -- "${OUT[@]}"
 }
@@ -1413,6 +1785,16 @@ while (( $# )); do
         -F|--fahrenheit)
             FAHRENHEIT=1
             ;;
+        -t|--theme)
+            (( ${THEMES[(Ie)${2:-}]} )) || die "--theme needs one of: ${(j:, :)THEMES}"
+            THEME=$2
+            shift
+            ;;
+        --sky)
+            [[ ${2:-} == (auto|day|night|snow|fireworks) ]] || die "--sky needs one of: auto, day, night, snow, fireworks"
+            SKY_MODE=$2
+            shift
+            ;;
         -1|--once)
             ONCE=1
             ;;
@@ -1424,6 +1806,8 @@ while (( $# )); do
     esac
     shift
 done
+
+apply_theme $THEME
 
 [[ $OSTYPE == darwin* ]] || die "$SCRIPT_NAME reads macOS tools (top, vm_stat, ioreg, pmset), so it only runs on macOS."
 
