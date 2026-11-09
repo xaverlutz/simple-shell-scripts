@@ -327,11 +327,19 @@ ensure_probe() {
     src=$(probe_source)
     hash=$(md5 -q -s "$src" 2>/dev/null) || return 1
     dir=${XDG_CACHE_HOME:-$HOME/Library/Caches}/simple-shell-scripts
-    if [[ -x $dir/system_stats_probe-${hash[1,12]} ]]; then
+    mkdir -p -m 700 "$dir" 2>/dev/null || return 1
+    # The helper runs as you, so only a cache folder that is yours, not a
+    # symlink, and not writable by anyone else is trusted (mkdir -m leaves an
+    # existing folder's permissions alone), and only a file you own in it.
+    # Glob qualifiers only apply in a real glob, not inside [[ ]], hence the array.
+    local -a mine
+    mine=($dir(#qN/U^IW))
+    [[ ! -L $dir ]] && (( $#mine )) || return 1
+    mine=($dir/system_stats_probe-${hash[1,12]}(#qN.U*^IW))
+    if (( $#mine )); then
         PROBE=$dir/system_stats_probe-${hash[1,12]}
         return 0
     fi
-    mkdir -p -m 700 "$dir" 2>/dev/null || return 1
     tmp=$dir/.system_stats_probe.$$
     if print -r -- "$src" | cc -O2 -x c -o "$tmp" - -framework IOKit -framework CoreFoundation >/dev/null 2>&1; then
         rm -f "$dir"/system_stats_probe-*(N)
@@ -510,6 +518,7 @@ collect_static() {
     local profile p e
     profile=$(system_profiler SPHardwareDataType SPDisplaysDataType 2>/dev/null)
     S_HOST=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+    S_HOST=${S_HOST//[[:cntrl:]]/}
     S_MODEL_NAME=$(awk -F': ' '/Model Name/ { print $2; exit }' <<<"$profile")
     S_GPU_NAME=$(awk -F': ' '/Chipset Model/ { print $2; exit }' <<<"$profile")
     S_GPU_CORES=$(awk -F': ' '/Total Number of Cores/ { n = $2 } END { print n }' <<<"$profile")
@@ -633,11 +642,13 @@ collect_bluetooth() {
     # Apple keyboards, mice and trackpads also report through IOKit, as
     # address<TAB>name<TAB><TAB>battery=percent. The name there is the model
     # ("Magic Mouse"), not the one the user gave it, so devices are matched
-    # by address, and by name only when IOKit gives no address.
+    # by address, and by name only when IOKit gives no address. Names come
+    # from the device itself, so control characters go: a tab would shift
+    # the fields, an escape sequence would reach the terminal.
     extra=$(ioreg -r -l -k BatteryPercent -w0 2>/dev/null | awk -F' = ' '
         function flush() { if (p != "" && b != "") print a "\t" p "\t\tbattery=" b; p = ""; b = ""; a = "" }
         /\+-o / { flush() }
-        /"Product" = / { p = $2; gsub(/"/, "", p) }
+        /"Product" = / { p = $2; gsub(/"/, "", p); gsub(/[[:cntrl:]]/, "", p) }
         /"BatteryPercent" = / { b = $2 + 0 }
         /"DeviceAddress" = / { a = toupper($2); gsub(/"/, "", a); gsub(/-/, ":", a) }
         END { flush() }')
@@ -674,10 +685,13 @@ parse_bluetooth() {   # [addresses] -- system_profiler SPBluetoothDataType on st
             if (!on || line == "") next
             if (!dev) dev = ind
             if (ind == dev && line ~ /:$/) {
-                flush(); name = substr(line, 1, length(line) - 1); kind = ""; bats = ""; addr = ""; next
+                # Device names are chosen by whoever named the device: no
+                # control characters, so a tab cannot add fields
+                flush(); name = substr(line, 1, length(line) - 1); gsub(/[[:cntrl:]]/, "", name)
+                kind = ""; bats = ""; addr = ""; next
             }
             if (line ~ /^Address: /) addr = substr(line, 10)
-            else if (line ~ /^Minor Type: /) kind = substr(line, 13)
+            else if (line ~ /^Minor Type: /) { kind = substr(line, 13); gsub(/[[:cntrl:]]/, "", kind) }
             else if (line ~ /Battery Level: [0-9]+%/) {
                 part = line; sub(/ ?Battery Level:.*/, "", part)
                 if (part == "") part = "battery"
@@ -822,8 +836,10 @@ collect_dynamic() {
     fi
 
     # Busiest processes
-    S_TOP_CPU=$(ps -Aceo pcpu=,rss=,comm= -r 2>/dev/null | head -n 12)
-    S_TOP_MEM=$(ps -Aceo pcpu=,rss=,comm= -m 2>/dev/null | head -n 12)
+    # Any user's process can be listed, and a process name can carry
+    # terminal escape sequences, so each line loses its control characters.
+    S_TOP_CPU=${(F)${(@f)"$(ps -Aceo pcpu=,rss=,comm= -r 2>/dev/null | head -n 12)"}//[[:cntrl:]]/}
+    S_TOP_MEM=${(F)${(@f)"$(ps -Aceo pcpu=,rss=,comm= -m 2>/dev/null | head -n 12)"}//[[:cntrl:]]/}
 
     # Bluetooth devices change rarely, and asking is the slowest call here
     (( COLLECT_TICK % 8 == 1 )) && collect_bluetooth
@@ -1386,19 +1402,22 @@ system_lines() {
 }
 
 bt_lines() {
-    local w=$1 line comp ink n=0
-    local -i level
+    local w=$1 line comp ink level n=0
     local -a f parts lines
     if [[ -z $S_BT_POWER ]]; then reply=("${C_GRAY}No Bluetooth on this Mac.${C_RESET}"); return; fi
     if [[ $S_BT_POWER == off ]]; then reply=("${C_GRAY}Bluetooth is off.${C_RESET}"); return; fi
     if [[ -z $S_BT ]]; then reply=("${C_GRAY}No devices connected.${C_RESET}"); return; fi
     for line in "${(@f)S_BT}"; do
         f=("${(@ps:\t:)line}")
-        lines+=("${C_BOLD}${f[1]}${C_RESET}${f[2]:+${C_GRAY} · ${(L)f[2]}${C_RESET}}")
+        # [[:cntrl:]] here also catches the 8-bit controls awk lets through
+        lines+=("${C_BOLD}${f[1]//[[:cntrl:]]/}${C_RESET}${f[2]:+${C_GRAY} · ${(L)f[2]//[[:cntrl:]]/}${C_RESET}}")
         parts=(${=f[3]})
         (( $#parts )) || lines+=("${C_GRAY}connected, no battery reading${C_RESET}")
         for comp in $parts; do
             level=${comp#*=}
+            # Only a plain number goes into math: zsh runs $(...) found in an
+            # array subscript there, so text from a device must never get in.
+            [[ $level == <-> ]] || continue
             if (( level <= 20 )); then ink=$PAL_HEAT[10]
             elif (( level <= 50 )); then ink=$PAL_HEAT[6]
             else ink=$PAL_HEAT[2]; fi
@@ -1418,7 +1437,8 @@ proc_lines() {   # cpu|mem [count] -> reply: the busiest processes with mini bar
     lines=("${C_BOLD}${(r:6:)tag}${C_RESET}${C_GRAY} %CPU  MEMORY  NAME${C_RESET}")
     for line in "${(@f)${(P)${:-S_TOP_${(U)which}}}}"; do
         f=(${=line})
-        (( $#f >= 3 )) || continue
+        # CPU and memory must be numbers before any math or printf touches them
+        (( $#f >= 3 )) && [[ $f[1] == <->(|.<->) && $f[2] == <-> ]] || continue
         if [[ $which == cpu ]]; then share=$f[1]
         # A quarter of all memory fills the bar
         else share=$(( ${S_MEM_TOTAL:-0} > 0 ? 400.0 * f[2] * 1024 / S_MEM_TOTAL : 0 )); fi
