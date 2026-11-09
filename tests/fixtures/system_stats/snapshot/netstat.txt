@@ -1,0 +1,3 @@
+Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
+en0        1500  <Link#14>   02:00:00:00:00:01 14161898     0 17029069252  2775782     0  925573812     0
+en0        1500  192.0.2     192.0.2.23        14161898     - 17029069252  2775782     -  925573812     -

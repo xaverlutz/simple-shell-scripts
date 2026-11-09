@@ -1,0 +1,8 @@
+core 0 1000 500 8500 0
+smc TC0P 61.50
+smc TC0D 64.25
+smc TG0P 55.00
+smc TB0T 31.00
+smc TH0a 40.75
+smc Tm0P 45.00
+fan 0 2160 2000 6200

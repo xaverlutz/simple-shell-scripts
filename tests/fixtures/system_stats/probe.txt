@@ -1,0 +1,16 @@
+core 0 1000 500 8500 0
+core 1 2000 1000 7000 0
+temp 41.25 PMU tdie1
+temp 47.50 PMU tdie3
+temp 99.00 PMU tcal
+temp 38.00 PMU tdev2
+temp 52.75 pACC MTR Temp Sensor0
+temp 49.25 eACC MTR Temp Sensor3
+temp 44.00 GPU MTR Temp Sensor1
+temp 33.50 NAND CH0 temp
+temp 30.25 gas gauge battery
+temp 29.00 PMU2 tdev1
+smc TC0P 88.00
+smc TB0T 77.00
+fan 0 1200 1200 5700
+fan 1 1350 1200 6100

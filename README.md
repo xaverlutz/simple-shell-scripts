@@ -2,7 +2,7 @@
 
 # 🐢 simple-shell-scripts
 
-**Small, friendly shell scripts for Git, Xcode and the iOS Simulator.**<br>
+**Small, friendly shell scripts for Git, Xcode, the iOS Simulator and your Mac.**<br>
 Install once per Mac, update with one command. They carry their shell everywhere.
 
 [![CI](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml/badge.svg)](https://github.com/xaverlutz/simple-shell-scripts/actions/workflows/ci.yml)
@@ -22,6 +22,7 @@ Install once per Mac, update with one command. They carry their shell everywhere
 | 🧹 [`delete_local_branch`](#-delete_local_branch) | Removes local branches whose remote branch is gone |
 | 🧽 [`reset_build`](#-reset_build) | Deletes the `.build` folder of a Swift package |
 | 📍 [`send_location`](#-send_location) | Sets the iOS Simulator's location from a city name |
+| 📊 [`system_stats`](#-system_stats) | A live, animated dashboard of your Mac's CPU, GPU, memory, temperatures, power, network and disk |
 | 🐢 [`update_shell_scripts`](#-staying-up-to-date) | Updates all of the above to the newest release |
 
 ## 🚀 Install
@@ -174,6 +175,38 @@ send_location --clear                      # back to the real location
 ```
 
 Needs `curl`, `python3` and Xcode.
+
+### 📊 `system_stats`
+
+A dashboard that stays open and refreshes itself, showing everything macOS reports without `sudo`:
+
+- **CPU**: user and system load, a bar per core grouped by cluster, load averages
+- **Thermals**: chip, board, SSD and battery temperatures, fan speeds, thermal pressure
+- **Bluetooth**: battery levels of connected devices, like AirPods (left, right and case) and Magic keyboards and mice
+- **Memory**, **GPU**, **power and battery**, **network**, **disk**, **system** facts and the **busiest processes**
+
+Bars glide to each new value in green-to-red gradients, sparklines show the recent history, and a turtle strolls across the top: faster the busier your CPU is, sprinting under load, sweating when the chip runs hot, carrying a battery while charging and napping when the Mac is idle. By day it walks under the sun and clouds, by night under the moon and stars, with snow from December to February and fireworks on New Year's Eve.
+
+```bash
+system_stats                  # live dashboard, a sample every 2 s
+system_stats -i 5 -F          # sample every 5 s, temperatures in °F
+system_stats -t ocean         # colors: turtle, ocean, sunset or mono
+system_stats --sky snow       # or day, night, fireworks; auto by default
+system_stats --once           # print one snapshot and exit
+```
+
+| Key | Does |
+|---|---|
+| `q` | Quit |
+| `p` | Pause |
+| `1` … `9`, `0` | Hide or show a panel; each shows its number in its corner |
+| `z`, then a number | Zoom that panel to full width with big history graphs (per core for the CPU); `z` or `Esc` goes back |
+| `t` | Switch the color theme |
+| `f` | Switch between °C and °F |
+
+Set `SYSTEM_STATS_THEME` in your `~/.zshrc` to keep a theme. It uses two columns from 110 columns of width, and fills in as many panels as the window is tall.
+
+macOS has no command for temperatures, fans or per-core load, so on first run `system_stats` compiles a small C helper that reads them through IOKit and caches it in `~/Library/Caches/simple-shell-scripts`. That needs the Xcode Command Line Tools; without them, everything else still works.
 
 > [!TIP]
 > Every script has a `--help` flag with the full details.

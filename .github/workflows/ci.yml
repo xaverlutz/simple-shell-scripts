@@ -49,11 +49,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # zsh too, or tests/system_stats.bats skips itself on Linux.
       - name: Install bats (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats
+          sudo apt-get install -y bats zsh
+          zsh --version
 
       - name: Install bats (macOS)
         if: runner.os == 'macOS'
@@ -169,6 +171,11 @@ jobs:
           delete_local_branch --help
           reset_build --help
           send_location --help
+          system_stats --help
+
+      - name: system_stats prints a snapshot
+        run: |
+          "$RUNNER_TEMP/prefix/bin/system_stats" --once
 
       - name: make uninstall leaves nothing behind
         run: |

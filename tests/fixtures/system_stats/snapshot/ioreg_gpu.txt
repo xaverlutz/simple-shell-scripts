@@ -1,0 +1,4 @@
++-o AGXAcceleratorG16X  <class AGXAcceleratorG16X, id 0x1000003a1, registered, matched, active, busy 0 (0 ms), retain 30>
+    {
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=2147483648,"Tiler Utilization %"=12,"Renderer Utilization %"=37,"Device Utilization %"=38,"In use system memory"=805306368}
+    }

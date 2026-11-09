@@ -1,0 +1,17 @@
++-o AppleDeviceManagementHIDEventService  <class AppleDeviceManagementHIDEventService, id 0x100000600, registered, matched, active, busy 0 (0 ms), retain 6>
+    {
+      "Product" = "Magic Trackpad"
+      "DeviceAddress" = "00-00-00-00-00-07"
+      "BatteryPercent" = 64
+    }
++-o AppleDeviceManagementHIDEventService  <class AppleDeviceManagementHIDEventService, id 0x100000601, registered, matched, active, busy 0 (0 ms), retain 6>
+    {
+      "Product" = "Magic Keyboard with Touch ID"
+      "DeviceAddress" = "00-00-00-00-00-03"
+      "BatteryPercent" = 64
+    }
++-o AppleDeviceManagementHIDEventService  <class AppleDeviceManagementHIDEventService, id 0x100000602, registered, matched, active, busy 0 (0 ms), retain 6>
+    {
+      "Product" = "Magic Keyboard"
+      "BatteryPercent" = 64
+    }
