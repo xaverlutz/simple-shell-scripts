@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Only read access is needed; nothing here writes to the repo.
+# CI reads repository contents; the coverage job can upload coverage data to Code Quality.
 permissions:
   contents: read
 
@@ -70,17 +70,14 @@ jobs:
           /bin/bash --version | head -1
           TEST_SHELL=/bin/bash make test
 
-  # Line coverage for the bash and zsh scripts (tests/coverage/), uploaded to
-  # Codecov, which comments on each PR with its coverage against main and
-  # serves the README badge. Pushes to main set that baseline. Uploads
-  # authenticate with GitHub's OIDC token, so no Codecov token is stored here.
+  # Upload Cobertura coverage to GitHub Code Quality for PR coverage reporting.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
+      code-quality: write
     steps:
       # The PR's head commit rather than the merge commit, so the reported
       # lines match the diff.
@@ -98,15 +95,14 @@ jobs:
           make coverage
           cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      # Fork PRs get no OIDC token, so they skip the upload.
-      - name: Upload coverage to Codecov
+      # Fork PRs cannot upload coverage to the base repository.
+      - name: Upload coverage report
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: codecov/codecov-action@v7
+        uses: actions/upload-code-coverage@v1
         with:
-          use_oidc: true
-          files: coverage/cobertura.xml
-          disable_search: true
-          fail_ci_if_error: true
+          file: coverage/cobertura.xml
+          language: Shell
+          label: code-coverage/shell-scripts
 
       - name: Keep the report
         if: always()
