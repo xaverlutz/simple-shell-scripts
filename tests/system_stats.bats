@@ -47,15 +47,22 @@ source "$LIB" || exit 99
 
 # Put stand-ins for the macOS tools system_stats reads first on PATH. Each is
 # a link to fixtures/system_stats/snapshot/fake_tool.sh, which prints a saved
-# sample for the tool it's called as.
+# sample for the tool it's called as. $1 can name another snapshot folder,
+# such as the copy tampered_fixtures makes.
 fake_macos_tools() {
-  local t
+  local t snap=${1:-$FIX/snapshot}
   mkdir -p "$TMP/bin"
   for t in sysctl vm_stat ioreg system_profiler pmset top scutil hostname \
            sw_vers uname xcode-select route networksetup ipconfig who netstat df ps; do
-    ln -sf "$FIX/snapshot/fake_tool.sh" "$TMP/bin/$t"
+    ln -sf "$snap/fake_tool.sh" "$TMP/bin/$t"
   done
-  export SNAPSHOT_DIR="$FIX/snapshot" PATH="$TMP/bin:$PATH"
+  export SNAPSHOT_DIR="$snap" PATH="$TMP/bin:$PATH"
+}
+
+# A copy of the fixtures in $TMP/fix for a test to plant hostile samples in.
+tampered_fixtures() {
+  mkdir -p "$TMP/fix"
+  cp -R "$FIX/." "$TMP/fix/"
 }
 
 # Draw one --once snapshot, with the sky pinned to day so it doesn't depend
@@ -591,4 +598,126 @@ source "$0" "$@"' "$BATS_TEST_DIRNAME/../system_stats.sh" "$@"
   [ "${lines[0]}" = "net=[/] disk=[/]" ]
   [ "${lines[1]}" = "net=[/] disk=[/]" ]
   [[ "${lines[2]}" == "net=[0"*"/0"*"] disk=[0"*"/0"*"]" ]] || false
+}
+
+# --- Hostile input ---------------------------------------------------------
+# Device and process names are chosen by whoever made the device or started
+# the process. They must stay text: zsh runs $(...) found in an array
+# subscript during math, and escape sequences would reach the terminal.
+# Every payload below would create $TMP/pwned if it ran.
+
+@test "a device name from ioreg can't run commands or add fields" {
+  tampered_fixtures
+  printf '%s\n' '+-o Evil  <class AppleDeviceManagementHIDEventService>' '    {' \
+    "      \"Product\" = \"Evil Mouse$(printf '\t\t')battery=PAL_HEAT[\$(date>$TMP/pwned)]\"" \
+    '      "BatteryPercent" = 50' '    }' > "$TMP/fix/snapshot/ioreg_hid.txt"
+  fake_macos_tools "$TMP/fix/snapshot"
+  zsh_run 'collect_bluetooth; bt_lines 80; print -rl -- $reply'
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/pwned" ]
+  # The name lost its tabs, so its battery is the device's real 50%
+  [[ "$output" == *"Evil Mousebattery=PAL_HEAT"* ]] || false
+  [[ "$output" == *"battery"*"50%"* ]] || false
+}
+
+@test "a device name from system_profiler can't run commands or add fields" {
+  tampered_fixtures
+  sed "s/^          Living Room Speaker:/          Living$(printf '\t\t')battery=PAL_HEAT[\$(date>${TMP//\//\\/}\/pwned)]:/" \
+    "$FIX/bluetooth.txt" > "$TMP/fix/bluetooth.txt"
+  grep -q 'PAL_HEAT' "$TMP/fix/bluetooth.txt"
+  fake_macos_tools "$TMP/fix/snapshot"
+  zsh_run 'collect_bluetooth; print -r -- "$S_BT" | awk -F"\t" "{ print NF }" | sort -u; bt_lines 80'
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/pwned" ]
+  # Every device line still has exactly name, kind and batteries
+  [ "${lines[0]}" = "3" ]
+  [ "${#lines[@]}" -eq 1 ]
+}
+
+@test "bt_lines skips a battery level that isn't a number" {
+  zsh_run '
+    S_BT_POWER=on
+    S_BT=$'"'"'Dev\t\tbattery=PAL_HEAT[$(date>'"$TMP"'/pwned)] case=40'"'"'
+    bt_lines 80; print -rl -- $reply
+  '
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/pwned" ]
+  [[ "$output" == *"case"*"40%"* ]] || false
+  [[ "$output" != *"PAL_HEAT"* ]] || false
+}
+
+@test "proc_lines skips a line whose numbers aren't numbers" {
+  zsh_run '
+    S_TOP_CPU=$'"'"' PAL_HEAT[$(date>'"$TMP"'/pwned)] 100 evil\n 1.5 2048 good'"'"'
+    proc_lines cpu; print -rl -- $reply
+  '
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/pwned" ]
+  [[ "$output" == *"good"* ]] || false
+  [[ "$output" != *"evil"* ]] || false
+}
+
+@test "process names lose their control characters before they're drawn" {
+  tampered_fixtures
+  # A title-setting escape, a bell and an 8-bit CSI in a process name
+  printf ' 99.0 4096 zz\033]0;X\007q\n 50.0 4096 c1\302\23331mred\n' > "$TMP/fix/snapshot/ps_cpu.txt"
+  fake_macos_tools "$TMP/fix/snapshot"
+  zsh_run "apply_theme turtle; SKY_MODE=day; COLUMNS=120; once"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"zz]0;Xq"* ]] || false
+  [[ "$output" == *"c131mred"* ]] || false
+  [[ "$output" != *$'\033'* ]] || false
+  [[ "$output" != *$'\007'* ]] || false
+  [[ "$output" != *$'\302\233'* ]] || false
+}
+
+# ensure_probe with stand-ins: the tools are there, the source always hashes
+# to 0123456789ab..., and compiling fails, so only a cached helper can work.
+fake_probe_tools() {
+  mkdir -p "$TMP/probebin"
+  printf '#!/bin/sh\nexit 0\n' > "$TMP/probebin/xcode-select"
+  printf '#!/bin/sh\necho 0123456789abcdef0123456789abcdef\n' > "$TMP/probebin/md5"
+  printf '#!/bin/sh\nexit 1\n' > "$TMP/probebin/cc"
+  chmod +x "$TMP/probebin"/*
+  export PATH="$TMP/probebin:$PATH" XDG_CACHE_HOME="$TMP/cache"
+  CACHE="$TMP/cache/simple-shell-scripts"
+  mkdir -p "$CACHE"
+  printf '#!/bin/sh\ndate > "%s/pwned"\n' "$TMP" > "$CACHE/system_stats_probe-0123456789ab"
+  chmod 700 "$CACHE" "$CACHE/system_stats_probe-0123456789ab"
+}
+
+probe_verdict() {
+  zsh_run 'if ensure_probe; then print "trusted ${PROBE:t}"; else print refused; fi'
+}
+
+@test "ensure_probe uses a cached helper only from a private folder" {
+  fake_probe_tools
+  probe_verdict
+  [ "$output" = "trusted system_stats_probe-0123456789ab" ]
+
+  # Someone else could have planted it: the folder is writable by others
+  chmod 777 "$CACHE"
+  probe_verdict
+  [ "$output" = "refused" ]
+  chmod 770 "$CACHE"
+  probe_verdict
+  [ "$output" = "refused" ]
+
+  # A symlinked cache folder isn't trusted either
+  chmod 700 "$CACHE"
+  mv "$CACHE" "$TMP/cache/real"
+  ln -s "$TMP/cache/real" "$CACHE"
+  probe_verdict
+  [ "$output" = "refused" ]
+  [ ! -e "$TMP/pwned" ]
+}
+
+@test "ensure_probe doesn't use a cached helper others can write to" {
+  fake_probe_tools
+  chmod 757 "$CACHE/system_stats_probe-0123456789ab"
+  probe_verdict
+  [ "$output" = "refused" ]
+  chmod 644 "$CACHE/system_stats_probe-0123456789ab"
+  probe_verdict
+  [ "$output" = "refused" ]
 }
