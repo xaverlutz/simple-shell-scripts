@@ -635,8 +635,12 @@ collect_bluetooth() {
         /"Product" = / { p = $2; gsub(/"/, "", p) }
         /"BatteryPercent" = / { b = $2 + 0 }
         END { if (p != "" && b != "") print p "\t\tbattery=" b }')
+    # The separator stays outside double quotes: inside them zsh keeps $'\n'
+    # as those four characters, which glued the device onto the line before.
     for line in "${(@f)extra}"; do
-        [[ -n $line && $'\n'$S_BT$'\n' != *$'\n'"${line%%$'\t'*}"$'\t'* ]] && S_BT+="${S_BT:+$'\n'}$line"
+        [[ -n $line && $'\n'$S_BT$'\n' != *$'\n'"${line%%$'\t'*}"$'\t'* ]] || continue
+        [[ -n $S_BT ]] && S_BT+=$'\n'
+        S_BT+=$line
     done
 }
 
