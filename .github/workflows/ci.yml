@@ -62,6 +62,26 @@ jobs:
       - name: Run tests
         run: make test
 
+      # Line coverage for both the bash and zsh scripts, from tests/coverage/.
+      # One OS is enough; the macOS leg already checks the tests pass there.
+      - name: Coverage
+        if: runner.os == 'Linux'
+        run: |
+          make coverage
+          cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage/lcov.info
+            coverage/summary.md
+            coverage/badge.json
+            coverage/annotated/
+          if-no-files-found: ignore
+
       # macOS ships bash 3.2, where mapfile and other bash 4 builtins are
       # absent. Re-run the suite pinned to it.
       - name: Run tests under bash 3.2
@@ -116,3 +136,33 @@ jobs:
           test ! -e "$SIMPLE_SHELL_SCRIPTS_DIR/create_branch.sh"
           "$BINDIR/update_shell_scripts" --all
           "$BINDIR/create_branch" --help
+
+  # Publishes the coverage badge in the README: a shields.io endpoint file on
+  # the orphan `badges` branch, replaced by a single force-pushed commit so the
+  # branch never grows. Only main updates it, and only this job can write.
+  coverage-badge:
+    name: coverage badge
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [test]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+
+      - name: Push badge.json to the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir badges && cd badges
+          git init -q -b badges
+          cp ../coverage/badge.json coverage.json
+          git add coverage.json
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -qm "Coverage badge for ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges

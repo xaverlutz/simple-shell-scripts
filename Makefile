@@ -8,6 +8,8 @@
 #                    (stricter: make lint SHELLCHECK_SEVERITY=style)
 #   make test        run the bats test suite in tests/
 #   make check       lint + test
+#   make coverage    run the tests with a line tracer and report coverage
+#                    (fail below a threshold: make coverage COVERAGE_MIN=50)
 #
 # Override the destination with PREFIX or BINDIR:
 #   make install PREFIX=/usr/local
@@ -19,6 +21,11 @@ BINDIR ?= $(PREFIX)/bin
 # Raise to "style" once the remaining `egrep` in delete_local_branch.sh is
 # changed to `grep -E`; "warning" keeps the current tree green.
 SHELLCHECK_SEVERITY ?= warning
+
+# Where `make coverage` writes its report, and the total percentage below
+# which it fails.
+COVERAGE_DIR ?= coverage
+COVERAGE_MIN ?= 0
 
 # install.sh is the installer/updater, not a user script: linking it as
 # "install" would shadow /usr/bin/install. `make link` exposes it as UPDATER.
@@ -33,7 +40,7 @@ BASH_SCRIPTS := $(shell for f in $(ALL_SH); do head -1 $$f | grep -q bash && ech
 ZSH_SCRIPTS  := $(shell for f in $(ALL_SH); do head -1 $$f | grep -q zsh  && echo $$f; done)
 
 .DEFAULT_GOAL := help
-.PHONY: help install link uninstall lint test check list path-check
+.PHONY: help install link uninstall lint test check coverage list path-check
 
 help:
 	@echo "Targets:"
@@ -43,6 +50,7 @@ help:
 	@echo "  lint        Run shellcheck / syntax checks"
 	@echo "  test        Run the bats test suite"
 	@echo "  check       lint + test"
+	@echo "  coverage    Run the tests and report line coverage"
 	@echo "  list        Show what would be installed"
 	@echo
 	@echo "Destination: $(BINDIR)   (override with PREFIX= or BINDIR=)"
@@ -119,3 +127,24 @@ test:
 	@bats tests/
 
 check: lint test
+
+# The tracers in tests/coverage/ hook in through BASH_ENV (bash scripts),
+# ZDOTDIR (zsh scripts run as commands) and COV_ZSH (zsh code the tests source
+# with `zsh -f`). The report is written even when a test fails, and the target
+# still fails in that case.
+coverage:
+	@command -v bats >/dev/null 2>&1 || { \
+		echo "bats not found. Install with: brew install bats-core"; exit 1; }
+	@rm -rf "$(COVERAGE_DIR)"
+	@mkdir -p "$(COVERAGE_DIR)/annotated"
+	@: > "$(COVERAGE_DIR)/trace"
+	@status=0; \
+	COV_DIR="$(abspath $(COVERAGE_DIR))" \
+	BASH_ENV="$(CURDIR)/tests/coverage/trace.bash" \
+	ZDOTDIR="$(CURDIR)/tests/coverage/zdotdir" \
+	COV_ZSH="$(CURDIR)/tests/coverage/trace.zsh" \
+		bats tests/ || status=$$?; \
+	echo; \
+	awk -v out="$(COVERAGE_DIR)" -v min="$(COVERAGE_MIN)" \
+		-f tests/coverage/report.awk "$(COVERAGE_DIR)/trace" $(ALL_SH) || status=1; \
+	exit $$status
