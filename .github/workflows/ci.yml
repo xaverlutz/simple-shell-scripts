@@ -71,16 +71,16 @@ jobs:
           TEST_SHELL=/bin/bash make test
 
   # Line coverage for the bash and zsh scripts (tests/coverage/), uploaded to
-  # GitHub's code coverage, which comments on each PR with its coverage
-  # against main. Pushes to main set that baseline. Needs Code Quality, with
-  # code coverage analysis, enabled in the repository's settings.
+  # Codecov, which comments on each PR with its coverage against main and
+  # serves the README badge. Pushes to main set that baseline. Uploads
+  # authenticate with GitHub's OIDC token, so no Codecov token is stored here.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      code-quality: write
+      id-token: write
     steps:
       # The PR's head commit rather than the merge commit, so the reported
       # lines match the diff.
@@ -98,14 +98,15 @@ jobs:
           make coverage
           cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      # Fork PRs get no write token, so they skip the upload.
-      - name: Upload coverage to GitHub
+      # Fork PRs get no OIDC token, so they skip the upload.
+      - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-code-coverage@v1
+        uses: codecov/codecov-action@v7
         with:
-          file: coverage/cobertura.xml
-          language: Shell
-          label: code-coverage/bats
+          use_oidc: true
+          files: coverage/cobertura.xml
+          disable_search: true
+          fail_ci_if_error: true
 
       - name: Keep the report
         if: always()

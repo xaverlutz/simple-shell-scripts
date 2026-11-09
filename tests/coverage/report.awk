@@ -15,7 +15,7 @@
 # case patterns, function headers) and comments don't count. A statement is
 # covered when any of its lines was traced.
 #
-# Writes OUT/cobertura.xml (what CI uploads to GitHub), OUT/lcov.info (for
+# Writes OUT/cobertura.xml (what CI uploads to Codecov), OUT/lcov.info (for
 # editor gutters), OUT/summary.md, and OUT/annotated/<script> with each line
 # marked "> " (ran), "! " (never ran) or "  " (not a statement). Prints a
 # table and exits 1 if total coverage is below MIN percent.
@@ -226,9 +226,9 @@ function xmlesc(s) {
   return s
 }
 
-# Cobertura XML, the format GitHub's code coverage (actions/upload-code-coverage)
-# reads. Each script is a class in one package; each statement is a line,
-# with no branch data. Paths are relative to the repository root.
+# Cobertura XML, which CI uploads to Codecov. Each script is a class in one
+# package; each statement is a line, with no branch data. Paths are relative
+# to the repository root.
 function cobertura(    f, i, now) {
   f = out "/cobertura.xml"
   srand(); now = srand()
